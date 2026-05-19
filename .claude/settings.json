@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python*)",
+      "Bash(pip*)",
+      "Bash(git*)",
+      "Bash(streamlit*)",
+      "Bash(jupyter*)",
+      "Bash(mkdir*)",
+      "Bash(ls*)",
+      "Bash(cat*)"
+    ]
+  }
+}

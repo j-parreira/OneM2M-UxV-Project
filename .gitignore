@@ -1,0 +1,72 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+dist/
+build/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Streamlit
+.streamlit/secrets.toml
+
+# ACME CSE runtime files
+src/cse/acmecse-db/
+src/cse/*.db
+src/cse/acmecse.log
+
+# Android
+src/android/.gradle/
+src/android/build/
+src/android/local.properties
+src/android/.idea/
+src/android/*.iml
+src/android/captures/
+src/android/.externalNativeBuild/
+
+# Large data files (>10 MB rule — keep directory structure)
+data/raw/*.csv
+data/raw/*.json
+data/raw/*.parquet
+data/processed/*.csv
+data/processed/*.json
+data/processed/*.parquet
+# Preserve directory markers
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+
+# Environment / secrets
+.env
+*.env
+local.properties
+secrets.json
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+ehthumbs.db
+
+# IDEs
+.idea/
+*.iml
+.vscode/
+*.code-workspace
+*.suo
+*.user
+
+# LaTeX (if paper added later)
+docs/paper/*.aux
+docs/paper/*.log
+docs/paper/*.out
+docs/paper/*.synctex.gz
+docs/paper/*.fls
+docs/paper/*.fdb_latexmk
+docs/paper/_minted-*/
