@@ -88,13 +88,38 @@ docs/             Reference documentation. Not auto-generated.
 
 ---
 
+## Deadlines
+
+| Deadline | Artefact |
+|---|---|
+| **2026-06-06** | Course paper — Mobilidade em Sistemas Computacionais (hard) |
+| After June 6 | IEEE/ACM conference paper (extended version) |
+
+The course paper requires: system architecture description, at least preliminary experimental
+results for ≥ 2 protocols, methodology. Full 4-protocol comparison is the stretch goal.
+
+---
+
+## Infrastructure
+
+ACME CSE runs in **Docker Compose** (`src/cse/docker-compose.yml`) on the Windows 11 dev
+machine — not as a bare Python process. This gives a Linux environment for `tc netem` (used
+in Scenario 3) without requiring WSL or a separate VM.
+
+The DJI RC and the dev machine are on the **same WiFi network**. The Android app discovers
+the CSE IP via a settings screen (no hardcoded IP).
+
+---
+
 ## What Does NOT Exist Yet
 
-As of project start, the repository contains only scaffolding. The following are to be built:
-- ACMECSE Android app bindings for each protocol
-- Streamlit benchmark orchestrator
-- Data collection and logging in the frontend
-- Analysis scripts and notebooks
-- CSE resource tree configuration
+The Android app (Kotlin, DJI SDK v4) exists and is being adapted from an existing project.
+The following still need to be built or scaffolded:
+
+- `src/cse/` — Docker Compose setup and ACME CSE config files for the resource tree
+- `src/frontend/` — Streamlit benchmark orchestrator and data logging
+- `src/analysis/` — Analysis scripts and Jupyter notebooks
+- Protocol-specific bindings in the Android app (MQTT, WebSocket, CoAP — HTTP may already exist)
+- Multi-drone / load simulation strategy (unresolved — revisit after Android app is reviewed)
 
 Check `docs/adr/` and git log for what has been added since.

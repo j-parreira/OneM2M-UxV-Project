@@ -24,12 +24,16 @@ protocol handles burst traffic.
 
 ### Scenario 3 — Degraded Network
 
-Network emulation adds packet loss (2%, 5%, 10%) using `tc netem` on the router or dev machine.
+Network emulation adds packet loss (2%, 5%, 10%) using `tc netem` **inside the ACME CSE Docker
+container** (Linux network stack). This avoids Windows host limitations. The container's network
+interface is shaped before each run and reset after.
+
 Tests protocol resilience and retransmission behaviour.
 
 **Metrics:** packet loss (actual vs injected), latency increase, throughput degradation
 **Duration:** 5 minutes per loss level per protocol
 **Repetitions:** 10 runs per combination (loss level × protocol)
+**Priority:** lower — scheduled after June 6 course paper deadline
 
 ---
 

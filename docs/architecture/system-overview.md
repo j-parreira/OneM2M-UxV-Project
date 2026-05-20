@@ -60,10 +60,19 @@ Dashboard  (displays live data, logs to data/raw/)
 ```
 [DJI RC / Android] ──WiFi──▶ [Router / Hotspot]
                                     │
-                              [Dev Machine]
-                              ├── ACME CSE  (:8080 HTTP, :1883 MQTT, :5683 CoAP, :80 WS)
+                              [Dev Machine — Windows 11]
+                              ├── Docker Container: ACME CSE
+                              │     :8080 HTTP
+                              │     :1883 MQTT
+                              │     :5683/udp CoAP
+                              │     :80 WebSocket
+                              │     (tc netem runs inside container for Scenario 3)
                               └── Streamlit Dashboard  (:8501)
+                                    (Python venv on host)
 ```
+
+The Android app is configured with the dev machine's LAN IP via a settings screen.
+No IPs are hardcoded in the app or in configuration files committed to the repo.
 
 ## Key OneM2M Concepts Used
 

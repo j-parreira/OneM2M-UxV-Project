@@ -3,8 +3,12 @@
 ## Project at a Glance
 
 Research project benchmarking OneM2M middleware across MQTT, WebSocket, HTTP, and CoAP for
-DJI UxV (unmanned vehicle) operations. Target: IEEE/ACM conference paper. Academic context:
-IPL Leiria, Mestrado em Engenharia Informática.
+DJI UxV (unmanned vehicle) operations. Academic context: IPL Leiria, Mestrado em Engenharia
+Informática.
+
+**Deadlines:**
+- **2026-06-06** — Course paper submission (Mobilidade em Sistemas Computacionais) — hard deadline
+- **After June 6** — IEEE/ACM conference paper submission (extended version)
 
 See `docs/ai-context/project-context.md` for full system context before starting any task.
 
@@ -16,7 +20,7 @@ See `docs/ai-context/project-context.md` for full system context before starting
 |-----------------|--------------------|------------------------------------|
 | `src/android/`  | Kotlin, DJI SDK v4 | Android Studio project             |
 | `src/frontend/` | Python, Streamlit  | `python -m streamlit run app.py`   |
-| `src/cse/`      | Python, ACME CSE   | `python -m acmecse`                |
+| `src/cse/`      | Docker, ACME CSE   | `docker compose up`                |
 | `src/analysis/` | Python             | Scripts in `scripts/`, notebooks in `notebooks/` |
 | `docs/`         | Markdown           | Reference only, do not auto-generate |
 
@@ -27,12 +31,14 @@ See `docs/ai-context/project-context.md` for full system context before starting
 Each Python sub-project has its own `.venv` — never install packages globally.
 
 ```
-src/cse/.venv        ← activate before running CSE
 src/frontend/.venv   ← activate before running Streamlit
 src/analysis/.venv   ← activate before running scripts/notebooks
 ```
 
 Always use `python -m pip install` inside the relevant activated environment.
+
+> **Note:** `src/cse/` does NOT use a `.venv` — ACME CSE runs in Docker. Use
+> `docker compose up` from `src/cse/`. See `docs/adr/002-cse-deployment.md`.
 
 ---
 
@@ -82,10 +88,12 @@ Always use `python -m pip install` inside the relevant activated environment.
 ## Architecture Decisions
 
 See `docs/adr/` for full records. Key decisions:
-- **CSE:** ACME CSE (Python) — see `docs/adr/001-technology-choices.md`
+- **CSE runtime:** Docker Compose — see `docs/adr/002-cse-deployment.md`
+- **CSE implementation:** ACME CSE (Python) — see `docs/adr/001-technology-choices.md`
 - **Frontend:** Streamlit — test/research only, not production
-- **Android app:** existing project adapted (not created from scratch)
+- **Android app:** existing project adapted (not from scratch) — DJI SDK v4 already working
 - **Drone:** DJI M2EA with Android RC (SDK v4)
+- **tc netem (Scenario 3):** runs inside the CSE Docker container, not on host
 
 ---
 
@@ -102,6 +110,19 @@ See `docs/adr/` for full records. Key decisions:
 
 ---
 
+## Service Startup Order
+
+When running the full system:
+
+1. `docker compose up` from `src/cse/` — wait for CSE to be healthy on :8080
+2. `streamlit run app.py` from `src/frontend/` (with venv active)
+3. Launch Android app on DJI RC — it registers as AE on the CSE at startup
+4. Drone must be powered on before DJI SDK commands are issued
+
+The Android app is configured with the CSE IP via a settings screen — no hardcoded IP.
+
+---
+
 ## Running Tests
 
 Test infrastructure to be defined. When added, document here with exact commands.
@@ -112,6 +133,9 @@ Test infrastructure to be defined. When added, document here with exact commands
 
 - `docs/ai-context/project-context.md` — full system context and architecture
 - `docs/ai-context/decisions.md` — design decisions and rationale
+- `docs/ai-context/cse-dev.md` — development context for `src/cse/` (Docker, config, resource tree)
+- `docs/ai-context/frontend-dev.md` — development context for `src/frontend/` (Streamlit, protocol clients, logging)
+- `docs/ai-context/analysis-dev.md` — development context for `src/analysis/` (pipeline, statistics, figures)
 - `docs/architecture/system-overview.md` — OneM2M resource tree and data flow
 - `docs/protocols/test-scenarios.md` — how each protocol is tested
 - `docs/adr/` — Architecture Decision Records

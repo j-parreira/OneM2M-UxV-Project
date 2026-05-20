@@ -16,10 +16,12 @@ targeting a conference paper submission.
 **Chosen over:** Eclipse OM2M (Java), OpenMTC (Python)
 
 **Reasons:**
-- Actively maintained (2024 releases), full oneM2M Release 4 compliance
+- Actively maintained (2024+ releases), full oneM2M Release 4 compliance
 - Python codebase is easier to inspect and instrument for research purposes
 - Simpler local deployment than OM2M (no OSGi container needed)
 - Supports all four target protocols natively
+
+**Deployment:** Docker Compose (see ADR-002) — not bare Python on Windows host.
 
 ### Frontend: Python + Streamlit
 
