@@ -1,20 +1,27 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+    view_dboids.xml — Layout principal do ecrã de voo (DuvopsView).
+
+    Estrutura:
+    - VideoFeedView a ocupar o fundo (fullscreen)
+    - Barra superior semi-transparente: campo CSE host, botão connect/disconnect,
+      botão simulador, botão abort
+    - Painel de status inferior: status da sessão OneM2M + contador de telemetria
+-->
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/dboids_root"
     android:layout_width="match_parent"
     android:layout_height="match_parent">
 
-    <!-- 🎥 Vídeo ocupa o fundo -->
+    <!-- Feed de vídeo do drone — ocupa o fundo completo -->
     <com.dji.sdk.duvops.utils.VideoFeedView
         android:id="@+id/dboids_primary_videofeed"
         style="@style/main_camera_view"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:scaleType="centerCrop"
-         />
+        android:scaleType="centerCrop" />
 
-
-    <!-- 🔝 Painel superior com botões -->
+    <!-- Barra superior: controlos de ligação -->
     <LinearLayout
         android:id="@+id/top_controls"
         android:layout_width="match_parent"
@@ -23,32 +30,33 @@
         android:background="#61000000"
         android:gravity="end"
         android:orientation="horizontal"
-        >
+        android:padding="4dp">
 
         <EditText
             android:id="@+id/websocketUrl"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:hint="Server IP"
+            android:hint="CSE Host"
             android:inputType="text"
             android:textAlignment="textEnd"
-            android:textColor="#FFF" />
+            android:textColor="#FFF"
+            android:textColorHint="#AAA" />
+
+        <!-- Botão de ligação/desligação ao ACME CSE (toggle) -->
         <Button
             android:id="@+id/connectws"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="Connect WS" />
-        <Button
-            android:id="@+id/startRTMP"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="Start Video" />
+            android:text="Connect CSE" />
+
+        <!-- Simulador DJI — para testes sem drone físico -->
         <Button
             android:id="@+id/startSimulator"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="Start Simulator" />
+            android:text="Simulator" />
 
+        <!-- Abort — termina a app de emergência -->
         <Button
             android:id="@+id/abort"
             android:layout_width="wrap_content"
@@ -56,22 +64,10 @@
             android:backgroundTint="#DC1414"
             android:text="Abort"
             android:textColor="@android:color/white" />
+
     </LinearLayout>
 
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="horizontal"
-        android:gravity="center_horizontal"
-        android:visibility="gone">
-
-        <Button
-            android:id="@+id/startUDP"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="Start UDP"
-            android:visibility="gone" />
-    </LinearLayout>
+    <!-- Painel de estado inferior -->
     <LinearLayout
         android:id="@+id/status_panel"
         android:layout_width="match_parent"
@@ -82,6 +78,7 @@
         android:orientation="vertical"
         android:padding="8dp">
 
+        <!-- Estado da sessão OneM2M (Registering / Ready / Disconnected / Reconnecting) -->
         <TextView
             android:id="@+id/statusField"
             android:layout_width="wrap_content"
@@ -91,13 +88,15 @@
             android:textColor="@android:color/white"
             android:textSize="14sp" />
 
+        <!-- Contador de telemetria (TX: seq=N) e último comando recebido (CMD: X) -->
         <TextView
             android:id="@+id/messageField"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="Mensagem"
+            android:text="—"
             android:textColor="@android:color/white"
             android:textSize="14sp" />
+
     </LinearLayout>
 
 </FrameLayout>

@@ -44,7 +44,9 @@ public class FlightActivity extends AppCompatActivity {
 
     @Override
     protected void onDestroy() {
+        // Limpar sessão OneM2M, WebSocket e timer de telemetria antes de destruir a activity.
+        // Sem este cleanup, o WebSocket e o timer ficam activos em segundo plano.
+        if (duvopsView != null) duvopsView.cleanup();
         super.onDestroy();
-        // TODO: Limpar recursos se necessário (ex: fechar WebSocket)
     }
 }

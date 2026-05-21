@@ -1,5 +1,5 @@
 <resources>
-    <string name="sample_app_name">DuvOps</string>
+    <string name="sample_app_name">UxV Benchmark</string>
     <string name="action_settings">Settings</string>
 
     <string name="sdk_version">DJI SDK Version: %1$s</string>

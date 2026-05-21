@@ -1,37 +1,41 @@
 /**
  * {@code OneM2MSession} — Camada de protocolo OneM2M sobre um transporte {@link ProtocolClient}.
  *
- * <p>Gere o ciclo de vida de uma sessão AE (Application Entity) com o ACME CSE:
+ * <p>Gere o ciclo de vida completo de uma sessão AE (Application Entity):
  * <ol>
  *   <li>Registo do AE ({@code m2m:ae}) no CSE</li>
  *   <li>Criação dos containers {@code telemetry} e {@code commands}</li>
- *   <li>Criação de uma subscrição no container {@code commands} para receber notificações</li>
- *   <li>Envio de telemetria como {@code m2m:cin} (contentInstance)</li>
+ *   <li>Criação de subscrição no container {@code commands}</li>
+ *   <li>Envio de telemetria como {@code m2m:cin} (fire-and-forget)</li>
  *   <li>Recepção e despacho de comandos via notificações {@code m2m:sgn}</li>
+ *   <li>Reconnect automático com exponential backoff em caso de falha</li>
+ *   <li>Timeout por request para evitar sessão suspensa</li>
  * </ol>
  *
- * <h3>Integração na stack</h3>
+ * <h3>Stack de comunicação</h3>
  * <pre>
  * DuvopsView / TelemetryManager
- *     → protocolClient: OneM2MSession  (implements ProtocolClient)
- *         → transport: NetworkManager  (raw WebSocket, implements ProtocolClient)
- *         → commandListener: FlightManager  (executa comandos no drone)
+ *     → OneM2MSession  (implements ProtocolClient — protocolo OneM2M)
+ *         → NetworkManager  (WebSocket raw — implementa ProtocolClient)
+ *             → SocketListener
  * </pre>
  *
  * <h3>Sequência de inicialização</h3>
  * <pre>
- * connect()
- *   → transport.connect() → WebSocket abre
- *   → onConnectionStatusChange(true) → registerAE()
- *   → resp 2001/4105 → createTelemetryContainer()
- *   → resp 2001/4105 → createCommandsContainer()
- *   → resp 2001/4105 → createSubscription()
- *   → resp 2001/4105 → onSessionReady()
- *   → commandListener.onConnectionStatusChange(true, ...) → startTelemetry()
+ * connect() → transport.connect() → WebSocket abre → onConnectionStatusChange(true)
+ *   → registerAE()               [rqi-1, ty=2]
+ *   → createTelemetryContainer() [rqi-2, ty=3]
+ *   → createCommandsContainer()  [rqi-3, ty=3]
+ *   → createSubscription()       [rqi-4, ty=23]
+ *   → onSessionReady()           → commandListener.onConnectionStatusChange(true, ...)
  * </pre>
  *
+ * <h3>Reconnect backoff</h3>
+ * <p>Em caso de falha (WebSocket ou erro OneM2M), retenta após 1 s → 2 s → 4 s → ... → 30 s.
+ * O backoff reinicia quando a sessão fica {@code ready}.
+ *
  * @author João Parreira
- * @version 1.0
+ * @version 2.0
  */
 package com.dji.sdk.duvops.network;
 
@@ -42,14 +46,15 @@ import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * Sessão OneM2M: registo de AE, gestão de containers e despacho de comandos.
- *
- * <p>Implementa {@link ProtocolClient} para ser usado por {@code DuvopsView} e
- * {@code TelemetryManager}. Implementa {@link DroneCommandListener} para ser
- * passado ao {@link NetworkManager} como receptor dos eventos de conexão.
+ * Sessão OneM2M com registo de AE, gestão de containers, subscrição,
+ * timeout de requests e reconnect automático.
  */
 public class OneM2MSession implements ProtocolClient, DroneCommandListener {
 
@@ -57,59 +62,114 @@ public class OneM2MSession implements ProtocolClient, DroneCommandListener {
 
     // ── OneM2M resource paths ────────────────────────────────────────────────
 
-    /** Base do CSE configurada em acme.ini → cseID = id-in */
+    /** Base do CSE — deve corresponder ao {@code cseID} em {@code acme.ini}. */
     private static final String CSE_BASE = "/id-in";
 
-    /** Nome do recurso AE (Application Entity) */
-    private static final String AE_NAME = "uxv";
+    /** Nome do recurso AE. */
+    private static final String AE_NAME  = "uxv";
 
-    /** API identifier do AE (oneM2M application ID) */
-    private static final String AE_API = "N.com.uxv.onem2m";
+    /** Application ID do AE (campo {@code api}). */
+    private static final String AE_API   = "N.com.uxv.onem2m";
 
     // ── OneM2M operation codes ───────────────────────────────────────────────
-
     private static final int OP_CREATE = 1;
     private static final int OP_NOTIFY = 5;
 
     // ── OneM2M resource type codes ───────────────────────────────────────────
-
     private static final int TY_AE  = 2;
     private static final int TY_CNT = 3;
     private static final int TY_CIN = 4;
     private static final int TY_SUB = 23;
 
     // ── OneM2M response status codes ─────────────────────────────────────────
-
-    private static final int RSC_OK      = 2000;
-    private static final int RSC_CREATED = 2001;
-    /** Recurso já existe — tratar como sucesso na inicialização. */
+    private static final int RSC_OK       = 2000;
+    private static final int RSC_CREATED  = 2001;
+    /** Recurso já existe — tratado como sucesso para permitir reconnect. */
     private static final int RSC_CONFLICT = 4105;
 
-    // ── Estado da sessão ─────────────────────────────────────────────────────
+    // ── Tempo de timeout por request (segundos) ───────────────────────────────
+    private static final int REQUEST_TIMEOUT_S    = 10;
+
+    // ── Reconnect backoff ────────────────────────────────────────────────────
+    private static final int MAX_RECONNECT_DELAY_S = 30;
+
+    // ── Dependências ─────────────────────────────────────────────────────────
 
     /** Transporte raw (WebSocket). Injectado via {@link #setTransport}. */
     private NetworkManager transport;
 
-    /** Executa os comandos de voo no drone. */
+    /** Executor de comandos de voo (FlightManager). */
     private final DroneCommandListener commandListener;
 
     /** Listener de debug para comandos recebidos. */
     private ProtocolClient.CommandLogListener commandLogListener;
 
-    /** Originator do AE: "C" + serialNumber (limpo). Definido em connect(). */
+    // ── Estado da sessão ─────────────────────────────────────────────────────
+
+    /**
+     * Callback de estado intermédio da sessão — actualiza a UI durante
+     * a sequência de registo e nos eventos de reconnect.
+     */
+    public interface SessionListener {
+        /**
+         * Chamado em cada mudança de estado da sessão.
+         *
+         * @param message mensagem descritiva do estado actual
+         */
+        void onSessionStatus(String message);
+    }
+
+    /** Listener de estado (normalmente DuvopsView.statusField). */
+    private SessionListener sessionListener;
+
+    /** Originator do AE: {@code "C" + serialNumber} (limpo, ≤ 32 chars). */
     private String aeOriginator;
 
-    /** Contador para gerar request IDs únicos. Thread-safe. */
+    /** {@code true} quando a sessão está registada e pronta a enviar telemetria. */
+    private volatile boolean ready = false;
+
+    /**
+     * {@code true} quando o utilizador chamou {@link #connect} e não chamou
+     * {@link #disconnect}. Controla o loop de reconnect.
+     */
+    private volatile boolean shouldReconnect = false;
+
+    // ── Reconnect state ──────────────────────────────────────────────────────
+
+    /** Delay actual do backoff (dobra a cada falha, máx. {@value MAX_RECONNECT_DELAY_S} s). */
+    private int reconnectDelayS = 1;
+
+    /** Parâmetros guardados para reconectar sem input do utilizador. */
+    private String savedHost;
+    private int savedPort;
+    private String savedAeId;
+
+    // ── Request tracking ─────────────────────────────────────────────────────
+
+    /** Gerador de request IDs únicos (thread-safe). */
     private final AtomicInteger rqiCounter = new AtomicInteger(0);
 
     /**
-     * Mapa de pedidos pendentes: rqi → callback a executar em caso de sucesso.
-     * Thread-safe (respostas chegam no thread do OkHttp).
+     * Pedidos pendentes: {@code rqi → callback a executar em caso de sucesso}.
+     * Thread-safe — respostas chegam no thread do OkHttp.
      */
     private final ConcurrentHashMap<String, Runnable> pending = new ConcurrentHashMap<>();
 
-    /** {@code true} após a sequência de inicialização completa. */
-    private volatile boolean ready = false;
+    /**
+     * Futuros de timeout por request. Cancelados quando a resposta chega.
+     */
+    private final ConcurrentHashMap<String, ScheduledFuture<?>> timeouts = new ConcurrentHashMap<>();
+
+    /**
+     * Scheduler partilhado para timeouts de request e delays de reconnect.
+     * Thread único — evita races entre os dois tipos de runnables.
+     */
+    private final ScheduledExecutorService scheduler =
+            Executors.newSingleThreadScheduledExecutor(r -> {
+                Thread t = new Thread(r, "onem2m-scheduler");
+                t.setDaemon(true);
+                return t;
+            });
 
     // ─────────────────────────────────────────────────────────────────────────
 
@@ -131,15 +191,25 @@ public class OneM2MSession implements ProtocolClient, DroneCommandListener {
      */
     public void setTransport(NetworkManager transport) {
         this.transport = transport;
-        // Interceptar todas as mensagens antes do dispatch normal de comandos
         transport.setRawMessageListener(this::onRawMessage);
+    }
+
+    /**
+     * Define o listener de estado intermédio da sessão.
+     *
+     * <p>Chamado durante a sequência de registo e em eventos de reconnect.
+     * Normalmente ligado ao {@code statusField} da UI.
+     *
+     * @param listener listener a chamar (pode ser {@code null})
+     */
+    public void setSessionListener(SessionListener listener) {
+        this.sessionListener = listener;
     }
 
     // ── ProtocolClient ───────────────────────────────────────────────────────
 
     /**
-     * Liga ao CSE. O transporte é aberto aqui; o registo AE começa quando a
-     * ligação é confirmada (via {@link #onConnectionStatusChange}).
+     * Liga ao CSE. Guarda os parâmetros para reconnect automático.
      *
      * @param host  IP ou hostname do CSE
      * @param port  porto WebSocket (normalmente 8180)
@@ -147,30 +217,42 @@ public class OneM2MSession implements ProtocolClient, DroneCommandListener {
      */
     @Override
     public void connect(String host, int port, String aeId) {
+        shouldReconnect = true;
+        reconnectDelayS = 1;
+        savedHost = host;
+        savedPort = port;
+        savedAeId = aeId;
         ready = false;
         pending.clear();
-        // Originator deve começar com "C" (regra oneM2M)
+        cancelAllTimeouts();
+
+        // Originator deve começar com "C" (oneM2M spec)
         String cleaned = aeId.replaceAll("[^a-zA-Z0-9]", "");
-        this.aeOriginator = "C" + (cleaned.length() > 32 ? cleaned.substring(0, 32) : cleaned);
+        aeOriginator = "C" + (cleaned.length() > 32 ? cleaned.substring(0, 32) : cleaned);
+
+        notifyStatus("Connecting to ws://" + host + ":" + port + "...");
         transport.connect(host, port, aeId);
     }
 
-    /** {@inheritDoc} */
+    /**
+     * Desliga explicitamente e cancela o reconnect automático.
+     */
     @Override
     public void disconnect() {
+        shouldReconnect = false;
         ready = false;
         pending.clear();
+        cancelAllTimeouts();
         transport.disconnect();
+        notifyStatus("Disconnected.");
     }
 
     /**
-     * Envia telemetria ao CSE como {@code m2m:cin} (contentInstance).
+     * Envia payload de telemetria como {@code m2m:cin} no container {@code telemetry}.
      *
-     * <p>Só envia quando a sessão está pronta ({@link #ready}). O payload é
-     * envolvido num frame {@code m2m:rqp} com {@code op=1} (CREATE) e {@code ty=4} (CIN).
-     * A resposta do CSE é ignorada (fire-and-forget) para não bloquear o timer de 250 ms.
+     * <p>Fire-and-forget — sem aguardar ACK. Silenciado se a sessão não estiver pronta.
      *
-     * @param jsonPayload JSON de telemetria gerado pelo {@code TelemetryManager}
+     * @param jsonPayload JSON de telemetria (gerado pelo {@code TelemetryManager})
      */
     @Override
     public void sendTelemetry(String jsonPayload) {
@@ -180,14 +262,15 @@ public class OneM2MSession implements ProtocolClient, DroneCommandListener {
                     .put("m2m:cin", new JSONObject()
                             .put("cnf", "application/json")
                             .put("con", jsonPayload));
-            // fire-and-forget: sem callback → resposta ignorada
             sendRequest(OP_CREATE, CSE_BASE + "/" + AE_NAME + "/telemetry", TY_CIN, pc, null);
         } catch (JSONException e) {
             Log.e(TAG, "sendTelemetry: " + e.getMessage());
         }
     }
 
-    /** @return {@code true} se a sessão OneM2M está registada e pronta. */
+    /**
+     * @return {@code true} se a sessão OneM2M está registada e pronta
+     */
     @Override
     public boolean isConnected() {
         return ready;
@@ -199,34 +282,51 @@ public class OneM2MSession implements ProtocolClient, DroneCommandListener {
         this.commandLogListener = listener;
     }
 
-    // ── DroneCommandListener (recebe eventos do transport) ───────────────────
+    /**
+     * Liberta todos os recursos: cancela o reconnect, para o scheduler.
+     *
+     * <p>Deve ser chamado em {@code FlightActivity.onDestroy()} via {@code DuvopsView.cleanup()}.
+     */
+    public void shutdown() {
+        shouldReconnect = false;
+        ready = false;
+        pending.clear();
+        cancelAllTimeouts();
+        if (!scheduler.isShutdown()) scheduler.shutdownNow();
+        if (transport != null) transport.disconnect();
+    }
+
+    // ── DroneCommandListener ─────────────────────────────────────────────────
 
     /**
      * Chamado pelo {@link NetworkManager} quando o WebSocket abre ou fecha.
      *
-     * <p>Em caso de ligação bem-sucedida, inicia a sequência de registo AE.
-     * O {@code commandListener} só é notificado após o registo estar completo.
+     * <ul>
+     *   <li>Ligado → inicia sequência de registo AE.</li>
+     *   <li>Desligado → notifica UI; agenda reconnect se {@link #shouldReconnect}.</li>
+     * </ul>
      */
     @Override
     public void onConnectionStatusChange(boolean isConnected, String message) {
         if (isConnected) {
-            Log.d(TAG, "Transport connected — starting AE registration");
+            reconnectDelayS = 1; // reset backoff
             registerAE();
         } else {
             ready = false;
             commandListener.onConnectionStatusChange(false, message);
+            if (shouldReconnect) scheduleReconnect();
         }
     }
 
     // ── Handlers de mensagens raw ────────────────────────────────────────────
 
     /**
-     * Processa uma mensagem JSON recebida do CSE.
+     * Processa mensagens JSON recebidas do CSE.
      *
-     * <p>Distingue respostas ({@code m2m:rsp}) de notificações de comandos
-     * ({@code m2m:rqp} com {@code op=5}).
-     *
-     * @param json mensagem JSON crua recebida do WebSocket
+     * <ul>
+     *   <li>{@code m2m:rsp} — resposta a um request da sequência de registo</li>
+     *   <li>{@code m2m:rqp} com {@code op=5} — notificação de comando</li>
+     * </ul>
      */
     private void onRawMessage(String json) {
         try {
@@ -237,47 +337,46 @@ public class OneM2MSession implements ProtocolClient, DroneCommandListener {
                 JSONObject rqp = obj.getJSONObject("m2m:rqp");
                 if (rqp.optInt("op", 0) == OP_NOTIFY) {
                     handleNotification(rqp);
-                    // ACK obrigatório para o CSE não reenviar a notificação
                     sendNotifyAck(rqp.optString("rqi", ""));
                 }
             }
         } catch (JSONException e) {
-            Log.e(TAG, "onRawMessage parse error: " + e.getMessage());
+            Log.e(TAG, "onRawMessage: " + e.getMessage());
         }
     }
 
     /**
-     * Processa uma resposta do CSE a um pedido anterior.
+     * Processa uma resposta do CSE.
      *
-     * <p>Consulta {@link #pending} pelo {@code rqi} e executa o callback se o
-     * pedido foi bem-sucedido (2001 Created, 2000 OK, ou 4105 Conflict — já existe).
-     *
-     * @param rsp objecto JSON {@code m2m:rsp}
+     * <p>Cancela o timeout correspondente e executa o callback de sucesso,
+     * ou chama {@link #handleRegistrationFailure} em caso de erro.
      */
     private void handleResponse(JSONObject rsp) throws JSONException {
         String rqi = rsp.optString("rqi", "");
-        int rsc = rsp.optInt("rsc", 0);
+        int rsc    = rsp.optInt("rsc", 0);
+
+        ScheduledFuture<?> timeoutFuture = timeouts.remove(rqi);
+        if (timeoutFuture != null) timeoutFuture.cancel(false);
+
         Runnable callback = pending.remove(rqi);
         boolean ok = (rsc == RSC_CREATED || rsc == RSC_OK || rsc == RSC_CONFLICT);
+
         if (callback != null && ok) {
             callback.run();
         } else if (callback != null) {
             Log.e(TAG, "Request failed rsc=" + rsc + " rqi=" + rqi);
-            commandListener.onConnectionStatusChange(false, "OneM2M error: rsc=" + rsc);
+            handleRegistrationFailure("OneM2M error rsc=" + rsc);
         }
-        // Se callback==null é resposta fire-and-forget (ex: telemetry CIN) — ignorar
+        // callback==null → fire-and-forget (telemetria CIN) — ignorar
     }
 
     /**
-     * Processa uma notificação de comando recebida do CSE.
+     * Extrai e despacha o comando JSON contido numa notificação do CSE.
      *
-     * <p>Extrai o campo {@code con} do {@code m2m:cin} dentro da notificação
-     * e delega o JSON de comando ao {@link #dispatchCommand}.
-     *
-     * @param rqp objecto JSON {@code m2m:rqp} com {@code op=5}
+     * <p>Formato esperado: {@code rqp.pc.m2m:sgn.nev.rep.m2m:cin.con = "{\"command\": ...}"}.
      */
     private void handleNotification(JSONObject rqp) throws JSONException {
-        JSONObject pc  = rqp.optJSONObject("pc");  if (pc  == null) return;
+        JSONObject pc  = rqp.optJSONObject("pc");    if (pc  == null) return;
         JSONObject sgn = pc.optJSONObject("m2m:sgn"); if (sgn == null) return;
         JSONObject nev = sgn.optJSONObject("nev");    if (nev == null) return;
         JSONObject rep = nev.optJSONObject("rep");    if (rep == null) return;
@@ -287,41 +386,33 @@ public class OneM2MSession implements ProtocolClient, DroneCommandListener {
     }
 
     /**
-     * Envia um ACK ao CSE para confirmar a recepção de uma notificação.
-     *
-     * @param rqi request ID da notificação a confirmar
+     * Envia ACK ao CSE para a notificação recebida (obrigatório para evitar reenvio).
      */
     private void sendNotifyAck(String rqi) {
         try {
-            JSONObject rsp = new JSONObject()
+            JSONObject ack = new JSONObject()
                     .put("m2m:rsp", new JSONObject()
                             .put("rsc", RSC_OK)
                             .put("rqi", rqi)
                             .put("to",  aeOriginator)
                             .put("fr",  aeOriginator));
-            transport.sendTelemetry(rsp.toString());
+            transport.sendTelemetry(ack.toString());
         } catch (JSONException e) {
             Log.e(TAG, "sendNotifyAck: " + e.getMessage());
         }
     }
 
     /**
-     * Parseia e despacha um JSON de comando ao {@code commandListener}.
+     * Parseia o JSON de comando e despacha ao {@code commandListener}.
      *
-     * <p>O formato esperado é o mesmo do modo raw: {@code {"command": "takeoff", ...}}.
-     *
-     * @param commandJson JSON do comando tal como chegou no campo {@code con} do CIN
+     * <p>Formato: {@code {"command": "takeoff", ...}} (igual ao modo raw legacy).
      */
     private void dispatchCommand(String commandJson) {
         try {
             JSONObject data = new JSONObject(commandJson);
             if (!data.has("command")) return;
             String command = data.getString("command");
-
-            if (commandLogListener != null) {
-                commandLogListener.onCommandReceived(command, commandJson);
-            }
-
+            if (commandLogListener != null) commandLogListener.onCommandReceived(command, commandJson);
             switch (command) {
                 case "takeoff":    commandListener.onTakeOff(); break;
                 case "land":       commandListener.onLand(); break;
@@ -338,9 +429,9 @@ public class OneM2MSession implements ProtocolClient, DroneCommandListener {
                             (float) data.optDouble("throttle", 0)); break;
                 case "gpsInput":
                 case "gpsInput360Mapping":
-                    if (data.has("lat") && data.has("lng")) {
+                    if (data.has("lat") && data.has("lng"))
                         commandListener.onMoveTo(data.getDouble("lat"), data.getDouble("lng"));
-                    } break;
+                    break;
                 case "perform360":  commandListener.onPerform360(); break;
                 case "startRTMP":   commandListener.onStartRTMP(); break;
                 case "identify":
@@ -364,8 +455,7 @@ public class OneM2MSession implements ProtocolClient, DroneCommandListener {
                             (float) data.optDouble("yaw",   0),
                             data.optString("mode", "absolute")); break;
                 case "gimbalReset":  commandListener.onGimbalReset(); break;
-                default:
-                    Log.d(TAG, "Unknown command: " + command);
+                default: Log.d(TAG, "Unknown command: " + command);
             }
         } catch (JSONException e) {
             Log.e(TAG, "dispatchCommand: " + e.getMessage());
@@ -374,13 +464,9 @@ public class OneM2MSession implements ProtocolClient, DroneCommandListener {
 
     // ── Sequência de registo OneM2M ──────────────────────────────────────────
 
-    /**
-     * Passo 1: registo do AE no CSE.
-     *
-     * <p>Se o AE já existir (rsc 4105), considera-se sucesso e avança para
-     * a criação dos containers.
-     */
+    /** Passo 1: registo do AE no CSE. Conflito (4105) = AE já existe → continuar. */
     private void registerAE() {
+        notifyStatus("Registering AE (" + aeOriginator + ")...");
         try {
             JSONObject pc = new JSONObject()
                     .put("m2m:ae", new JSONObject()
@@ -390,91 +476,123 @@ public class OneM2MSession implements ProtocolClient, DroneCommandListener {
                             .put("srv", new JSONArray().put("3"))
                             .put("rr",  true));
             sendRequest(OP_CREATE, CSE_BASE, TY_AE, pc, this::createTelemetryContainer);
-        } catch (JSONException e) {
-            Log.e(TAG, "registerAE: " + e.getMessage());
-        }
+        } catch (JSONException e) { Log.e(TAG, "registerAE: " + e.getMessage()); }
     }
 
-    /**
-     * Passo 2: criação do container de telemetria ({@code /id-in/uxv/telemetry}).
-     */
+    /** Passo 2: criação do container {@code /id-in/uxv/telemetry}. */
     private void createTelemetryContainer() {
+        notifyStatus("Creating telemetry container...");
         try {
             JSONObject pc = new JSONObject()
                     .put("m2m:cnt", new JSONObject()
-                            .put("rn", "telemetry")
-                            .put("mni", 10));   // máximo 10 instâncias em cache
+                            .put("rn",  "telemetry")
+                            .put("mni", 10));
             sendRequest(OP_CREATE, CSE_BASE + "/" + AE_NAME, TY_CNT, pc,
                     this::createCommandsContainer);
-        } catch (JSONException e) {
-            Log.e(TAG, "createTelemetryContainer: " + e.getMessage());
-        }
+        } catch (JSONException e) { Log.e(TAG, "createTelemetryContainer: " + e.getMessage()); }
     }
 
-    /**
-     * Passo 3: criação do container de comandos ({@code /id-in/uxv/commands}).
-     */
+    /** Passo 3: criação do container {@code /id-in/uxv/commands}. */
     private void createCommandsContainer() {
+        notifyStatus("Creating commands container...");
         try {
             JSONObject pc = new JSONObject()
                     .put("m2m:cnt", new JSONObject()
-                            .put("rn", "commands")
-                            .put("mni", 5));    // poucos comandos em fila
+                            .put("rn",  "commands")
+                            .put("mni", 5));
             sendRequest(OP_CREATE, CSE_BASE + "/" + AE_NAME, TY_CNT, pc,
                     this::createSubscription);
-        } catch (JSONException e) {
-            Log.e(TAG, "createCommandsContainer: " + e.getMessage());
-        }
+        } catch (JSONException e) { Log.e(TAG, "createCommandsContainer: " + e.getMessage()); }
     }
 
     /**
-     * Passo 4: criação de subscrição no container de comandos.
+     * Passo 4: subscrição ao container de comandos.
      *
-     * <p>O CSE enviará uma notificação ({@code m2m:sgn}) via WebSocket sempre
-     * que um novo CIN for criado em {@code /id-in/uxv/commands}.
+     * <p>O CSE entrega notificações via WebSocket quando um novo CIN
+     * é criado em {@code /id-in/uxv/commands}.
+     *
+     * <p>⚠ Se as notificações não chegarem, experimentar {@code nu = [aeOriginator]}
+     * em vez de {@code nu = [CSE_BASE + "/" + AE_NAME]}.
      */
     private void createSubscription() {
+        notifyStatus("Creating subscription...");
         try {
             JSONObject pc = new JSONObject()
                     .put("m2m:sub", new JSONObject()
                             .put("rn",  "sub-commands")
                             // net=3: notificar na criação de filho directo (novo CIN)
                             .put("enc", new JSONObject().put("net", new JSONArray().put(3)))
-                            // nu: entregar notificação ao nosso AE (mesma ligação WS)
+                            // nu: endereço de entrega da notificação (mesmo WS)
                             .put("nu",  new JSONArray().put(CSE_BASE + "/" + AE_NAME))
-                            // nct=2: incluir todos os atributos do recurso na notificação
+                            // nct=2: incluir todos os atributos na notificação
                             .put("nct", 2));
             sendRequest(OP_CREATE, CSE_BASE + "/" + AE_NAME + "/commands", TY_SUB, pc,
                     this::onSessionReady);
-        } catch (JSONException e) {
-            Log.e(TAG, "createSubscription: " + e.getMessage());
-        }
+        } catch (JSONException e) { Log.e(TAG, "createSubscription: " + e.getMessage()); }
     }
 
     /**
      * Passo 5 (final): sessão pronta — notifica o {@code FlightManager} que pode
-     * começar a receber comandos. Isto desencadeia o início do envio de telemetria
-     * em {@code DuvopsView.onStatusUpdate()}.
+     * começar a receber comandos. Dispara {@code telemetryManager.startTelemetry()} em cascata.
      */
     private void onSessionReady() {
         ready = true;
         Log.d(TAG, "OneM2M session ready — AE=" + aeOriginator);
-        commandListener.onConnectionStatusChange(true, "Connected to OneM2M CSE [" + CSE_BASE + "]");
+        notifyStatus("OneM2M ready — " + aeOriginator);
+        commandListener.onConnectionStatusChange(true,
+                "Connected to OneM2M CSE [" + CSE_BASE + "]");
+    }
+
+    // ── Tratamento de erros e reconnect ──────────────────────────────────────
+
+    /**
+     * Chamado quando um request da sequência de registo falha ou faz timeout.
+     *
+     * <p>Notifica a UI, reporta o erro ao {@code commandListener} e agenda reconnect
+     * se {@link #shouldReconnect}.
+     */
+    private void handleRegistrationFailure(String reason) {
+        Log.e(TAG, "Registration failure: " + reason);
+        notifyStatus("Error: " + reason);
+        commandListener.onConnectionStatusChange(false, "OneM2M error: " + reason);
+        if (shouldReconnect && !scheduler.isShutdown()) scheduleReconnect();
+    }
+
+    /**
+     * Agenda um reconnect com exponential backoff.
+     *
+     * <p>Limpa pedidos pendentes e timeouts antes de agendar para garantir
+     * que a próxima sessão começa limpa.
+     */
+    private void scheduleReconnect() {
+        pending.clear();
+        cancelAllTimeouts();
+        int delay = reconnectDelayS;
+        reconnectDelayS = Math.min(reconnectDelayS * 2, MAX_RECONNECT_DELAY_S);
+        notifyStatus("Reconnecting in " + delay + "s...");
+        if (scheduler.isShutdown()) return;
+        scheduler.schedule(() -> {
+            if (!shouldReconnect || transport == null) return;
+            notifyStatus("Reconnecting...");
+            pending.clear();
+            transport.connect(savedHost, savedPort, savedAeId);
+        }, delay, TimeUnit.SECONDS);
     }
 
     // ── Utilitários ──────────────────────────────────────────────────────────
 
     /**
-     * Constrói e envia um pedido OneM2M via transporte.
+     * Constrói e envia um request OneM2M via transporte, com timeout opcional.
      *
-     * <p>Gera um {@code rqi} único, armazena o callback em {@link #pending}
-     * (se não for {@code null}) e envia o frame via {@code transport.sendTelemetry()}.
+     * <p>Se {@code onSuccess != null}, agenda um timeout de {@value REQUEST_TIMEOUT_S} s.
+     * Se a resposta chegar antes do timeout, o timeout é cancelado. Se o timeout disparar
+     * sem resposta, chama {@link #handleRegistrationFailure}.
      *
-     * @param op         código de operação (OP_CREATE, etc.)
-     * @param to         caminho do recurso alvo (ex: {@code /id-in/uxv/commands})
-     * @param ty         tipo de recurso (TY_AE, TY_CNT, etc.)
-     * @param pc         conteúdo do pedido (objecto {@code m2m:ae}, {@code m2m:cnt}, etc.)
-     * @param onSuccess  callback a executar quando o CSE responde com sucesso; {@code null} para fire-and-forget
+     * @param op        código de operação (OP_CREATE)
+     * @param to        path do recurso alvo
+     * @param ty        tipo de recurso (TY_AE, TY_CNT, TY_CIN, TY_SUB)
+     * @param pc        conteúdo do pedido
+     * @param onSuccess callback em caso de resposta de sucesso; {@code null} para fire-and-forget
      */
     private void sendRequest(int op, String to, int ty, JSONObject pc, Runnable onSuccess) {
         String rqi = "rqi-" + rqiCounter.incrementAndGet();
@@ -487,41 +605,70 @@ public class OneM2MSession implements ProtocolClient, DroneCommandListener {
                             .put("rqi", rqi)
                             .put("ty",  ty)
                             .put("pc",  pc));
-            if (onSuccess != null) pending.put(rqi, onSuccess);
+
+            if (onSuccess != null) {
+                pending.put(rqi, onSuccess);
+                // Agendar timeout — se o CSE não responder, não ficamos suspensos
+                if (!scheduler.isShutdown()) {
+                    final String rqiFinal = rqi;
+                    ScheduledFuture<?> timeoutFuture = scheduler.schedule(() -> {
+                        Runnable cb = pending.remove(rqiFinal);
+                        timeouts.remove(rqiFinal);
+                        if (cb != null) {
+                            Log.e(TAG, "Timeout on " + rqiFinal);
+                            handleRegistrationFailure("timeout on " + rqiFinal);
+                        }
+                    }, REQUEST_TIMEOUT_S, TimeUnit.SECONDS);
+                    timeouts.put(rqi, timeoutFuture);
+                }
+            }
+
             transport.sendTelemetry(request.toString());
+
         } catch (JSONException e) {
             Log.e(TAG, "sendRequest rqi=" + rqi + ": " + e.getMessage());
         }
     }
 
-    // ── DroneCommandListener — delegação directa ao commandListener ──────────
+    /** Cancela todos os timeouts pendentes. */
+    private void cancelAllTimeouts() {
+        for (ScheduledFuture<?> f : timeouts.values()) f.cancel(false);
+        timeouts.clear();
+    }
+
+    /** Publica uma mensagem de estado ao SessionListener e ao log. */
+    private void notifyStatus(String message) {
+        Log.d(TAG, message);
+        if (sessionListener != null) sessionListener.onSessionStatus(message);
+    }
+
+    // ── DroneCommandListener — delegação ao commandListener ──────────────────
     // Estes métodos existem porque OneM2MSession é passado ao NetworkManager como
     // DroneCommandListener (para interceptar onConnectionStatusChange). Em modo OneM2M,
-    // os restantes métodos nunca são chamados pelo NetworkManager — os comandos chegam
-    // via notificações parseadas em dispatchCommand(). Os delegates ficam aqui para
-    // compatibilidade com a interface, caso o transport seja usado em modo raw.
+    // os comandos chegam via notificações parseadas em dispatchCommand() — estes
+    // delegates apenas garantem compilação correcta da interface.
 
-    @Override public void onTakeOff()                        { commandListener.onTakeOff(); }
-    @Override public void onLand()                           { commandListener.onLand(); }
-    @Override public void onMotors(boolean on)               { commandListener.onMotors(on); }
-    @Override public void onGoHome()                         { commandListener.onGoHome(); }
-    @Override public void onMoveTo(double lat, double lng)   { commandListener.onMoveTo(lat, lng); }
-    @Override public void onVirtualStickInput(float roll, float pitch, float yaw, float throttle) {
-        commandListener.onVirtualStickInput(roll, pitch, yaw, throttle);
+    @Override public void onTakeOff()                          { commandListener.onTakeOff(); }
+    @Override public void onLand()                             { commandListener.onLand(); }
+    @Override public void onMotors(boolean on)                 { commandListener.onMotors(on); }
+    @Override public void onGoHome()                           { commandListener.onGoHome(); }
+    @Override public void onMoveTo(double lat, double lng)     { commandListener.onMoveTo(lat, lng); }
+    @Override public void onVirtualStickInput(float r, float p, float y, float t) {
+        commandListener.onVirtualStickInput(r, p, y, t);
     }
     @Override public void onVirtualStickState(boolean enabled) { commandListener.onVirtualStickState(enabled); }
-    @Override public void onPerform360()                     { commandListener.onPerform360(); }
-    @Override public void onIdentify(boolean on)             { commandListener.onIdentify(on); }
-    @Override public void onStartMission(String startAction, String endAction, int repeat, float altitude, String pathJson) {
-        commandListener.onStartMission(startAction, endAction, repeat, altitude, pathJson);
+    @Override public void onPerform360()                       { commandListener.onPerform360(); }
+    @Override public void onIdentify(boolean on)               { commandListener.onIdentify(on); }
+    @Override public void onStartMission(String sa, String ea, int r, float alt, String path) {
+        commandListener.onStartMission(sa, ea, r, alt, path);
     }
-    @Override public void onStopMission()                    { commandListener.onStopMission(); }
-    @Override public void onPauseMission()                   { commandListener.onPauseMission(); }
-    @Override public void onStartRTMP()                      { commandListener.onStartRTMP(); }
-    @Override public void onSetZoom(float factor)            { commandListener.onSetZoom(factor); }
-    @Override public void onSetCameraMode(String mode)       { commandListener.onSetCameraMode(mode); }
+    @Override public void onStopMission()                      { commandListener.onStopMission(); }
+    @Override public void onPauseMission()                     { commandListener.onPauseMission(); }
+    @Override public void onStartRTMP()                        { commandListener.onStartRTMP(); }
+    @Override public void onSetZoom(float factor)              { commandListener.onSetZoom(factor); }
+    @Override public void onSetCameraMode(String mode)         { commandListener.onSetCameraMode(mode); }
     @Override public void onGimbalAngle(float pitch, float yaw, String mode) {
         commandListener.onGimbalAngle(pitch, yaw, mode);
     }
-    @Override public void onGimbalReset()                    { commandListener.onGimbalReset(); }
+    @Override public void onGimbalReset()                      { commandListener.onGimbalReset(); }
 }

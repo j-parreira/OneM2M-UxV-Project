@@ -1,11 +1,25 @@
 /**
- * {@code DuvopsView} — View principal de controlo de voo do drone.
+ * {@code DuvopsView} — View principal de controlo de voo e benchmark OneM2M.
  *
- * Combina a interface de utilizador com os gestores (NetworkManager, FlightManager,
- * CameraManager, TelemetryManager) para formar o ecrã de controlo do drone.
+ * Orquestra os gestores de voo, telemetria e protocolo OneM2M para
+ * a sessão de benchmark. Apresenta:
+ * <ul>
+ *   <li>Feed de vídeo do drone (H.264 fullscreen)</li>
+ *   <li>Barra superior: CSE host, botão Connect/Disconnect, Simulator, Abort</li>
+ *   <li>Painel inferior: estado da sessão OneM2M + contador de telemetria</li>
+ * </ul>
+ *
+ * <h3>Fluxo de inicialização</h3>
+ * <pre>
+ * DuvopsView(context)
+ *   → initUI()
+ *   → FlightManager + OneM2MSession + NetworkManager
+ *   → getSerialNumber() → connectToCse() → OneM2MSession.connect()
+ *     → [AE reg → containers → subscription] → startTelemetry()
+ * </pre>
  *
  * @author João Parreira
- * @version 2.0
+ * @version 3.0
  */
 package com.dji.sdk.duvops.flight;
 
@@ -36,204 +50,196 @@ import dji.common.util.CommonCallbacks;
 import dji.sdk.camera.VideoFeeder;
 import dji.sdk.products.Aircraft;
 import dji.sdk.sdkmanager.DJISDKManager;
-import dji.sdk.sdkmanager.LiveStreamManager;
-import dji.sdk.sdkmanager.LiveVideoBitRateMode;
-import dji.sdk.sdkmanager.LiveVideoResolution;
 
 /**
- * View de controlo principal do drone (drone control view).
- *
- * <h3>Componentes</h3>
- * <table>
- *   <tr><th>Componente</th><th>Papel</th></tr>
- *   <tr><td>{@link NetworkManager}</td><td>WebSocket para comunicação com o servidor</td></tr>
- *   <tr><td>{@link FlightManager}</td><td>Comandos de voo (takeoff, land, virtual sticks)</td></tr>
- *   <tr><td>{@link CameraManager}</td><td>Zoom e modo da câmara</td></tr>
- *   <tr><td>{@link TelemetryManager}</td><td>Polling e envio de telemetria ao servidor</td></tr>
- * </table>
- *
- * <h3>Fluxo de inicialização</h3>
- * <pre>
- * DuvopsView(context) → initUI() → [flight, network, telemetry, camera]
- *     → getSerialNumber() → flightManager.initFlightController()
- *     → connectWS() → NetworkManager.connect()
- * </pre>
+ * View de controlo de voo e benchmark — ecrã principal da app.
  */
 public class DuvopsView extends LinearLayout implements View.OnClickListener {
 
-    /** Tag para log. */
     private static final String TAG = "DuvopsView";
 
-    /** Chave para SharedPreferences do CSE. */
-    private static final String PREFS_NAME = "duvops_prefs";
+    /** SharedPreferences — persiste o CSE host entre sessões. */
+    private static final String PREFS_NAME    = "duvops_prefs";
     private static final String KEY_SERVER_URL = "server_url";
 
-    /** Host do ACME CSE por defeito (IP na LAN local). */
-    private static final String DEFAULT_CSE_HOST = "192.168.1.100";
+    /** Host do ACME CSE por defeito (IP do dev machine na LAN). */
+    private static final String DEFAULT_CSE_HOST    = "192.168.1.100";
 
-    /** Porto WebSocket do ACME CSE. */
-    private static final int DEFAULT_CSE_WS_PORT = 8180;
+    /** Porto WebSocket do ACME CSE (ver acme.ini → [websocket] port). */
+    private static final int    DEFAULT_CSE_WS_PORT = 8180;
 
-    /** SharedPreferences para persistir a configuração entre sessões. */
     private SharedPreferences prefs;
 
-    //region UI Elements
+    // ── UI ───────────────────────────────────────────────────────────────────
 
-    /** Botão de conexão WebSocket. */
-    private Button connectws;
-
-    /** Botão de início do stream RTMP. */
-    private Button startRTMP;
-
-    /** Botão de início do stream UDP (desativado). */
-    private Button startUDP;
-
-    /** Botão de início do simulador. */
-    private Button startSimulator;
-
-    /** Botão de abortar (terminar app). */
-    private Button abort;
-
-    /** Campo de texto para o IP do servidor WebSocket. */
+    /** Campo de texto para o host do CSE (ex: "192.168.1.100" ou "192.168.1.100:8180"). */
     private EditText hostname;
 
-    /** Campo de exibição de mensagens de feedback. */
-    private TextView messageField;
+    /** Botão de ligação/desligação ao CSE (toggle: "Connect CSE" ↔ "Disconnect"). */
+    private Button connectws;
 
-    /** Campo de exibição do estado de conexão. */
+    /** Botão para iniciar o simulador DJI com coordenadas de Leiria. */
+    private Button startSimulator;
+
+    /** Botão de abort de emergência (System.exit). */
+    private Button abort;
+
+    /** Linha de estado da sessão OneM2M (Registering / Ready / Disconnected). */
     private TextView statusField;
 
-    /** View de vídeo principal (H.264 decode + display). */
+    /** Contador de telemetria ("TX: seq=N") e último comando recebido ("CMD: X"). */
+    private TextView messageField;
+
+    /** Feed de vídeo H.264 do drone. */
     private VideoFeedView primaryVideoFeedView;
 
-    //endregion
+    // ── Managers ─────────────────────────────────────────────────────────────
 
-    //region Managers
+    /**
+     * Sessão OneM2M — referência tipada para acesso a {@link OneM2MSession#setSessionListener}
+     * e {@link OneM2MSession#shutdown()}. É também o {@code protocolClient}.
+     */
+    private OneM2MSession session;
 
-    /** Cliente de protocolo — OneM2MSession sobre WebSocket. */
+    /** Interface genérica de protocolo — usada por TelemetryManager. */
     private ProtocolClient protocolClient;
 
-    /** Gestor de telemetria — captura e envia dados ao servidor. */
+    /** Polling de telemetria (250 ms). */
     private TelemetryManager telemetryManager;
 
-    /** Gestor de voo — executa comandos no drone. */
+    /** Execução de comandos de voo no drone. */
     private FlightManager flightManager;
 
-    /** Gestor de câmara — zoom e modo. */
+    /** Controlo de câmara (zoom + modo). */
     private CameraManager cameraManager;
 
-    //endregion
+    // ── Estado ───────────────────────────────────────────────────────────────
 
-    /** Serial number do drone (setado por {@link #getSerialNumber()}). */
+    /** Serial number do drone (obtido assincronamente pelo DJI SDK). */
     public String serialNumber = "-1";
 
-    /** Nome do modelo do drone (ex: "Mavic 2 Enterprise Advanced"). */
+    /** Modelo do drone (ex: "Mavic 2 Enterprise Advanced"). */
     public String model = "";
+
+    /**
+     * {@code true} quando a sessão OneM2M está registada e o botão deve
+     * mostrar "Disconnect". Actualizado pelo FlightManager.UiUpdateListener.
+     */
+    private boolean sessionReady = false;
+
+    // ─────────────────────────────────────────────────────────────────────────
 
     /**
      * Cria a view e inicializa todos os gestores.
      *
-     * @param context o contexto da activity
+     * @param context contexto da activity
      */
     public DuvopsView(@NonNull Context context) {
         super(context);
         initUI(context);
 
-        // 1. Inicializar Flight Manager com callback de atualizações da UI
+        // 1. FlightManager — recebe comandos de voo e actualiza a UI
         flightManager = new FlightManager(new FlightManager.UiUpdateListener() {
             @Override
             public void onStatusUpdate(String status, boolean isError) {
                 post(() -> {
-                    statusField.setText(status);
-                    int color = isError ? android.R.color.holo_red_light : android.R.color.holo_green_light;
-                    statusField.setTextColor(getResources().getColor(color));
-
-                    // Iniciar telemetria quando sessão OneM2M estiver pronta
-                    if (status.startsWith("Connected") && !isError) {
+                    if (isError) {
+                        // Desligado ou erro — vermelho, botão volta a "Connect CSE"
+                        statusField.setTextColor(getResources().getColor(android.R.color.holo_red_light));
+                        sessionReady = false;
+                        connectws.setText("Connect CSE");
+                    } else if (status.startsWith("Connected")) {
+                        // Sessão OneM2M pronta — verde, botão muda para "Disconnect"
+                        statusField.setTextColor(getResources().getColor(android.R.color.holo_green_light));
+                        sessionReady = true;
+                        connectws.setText("Disconnect");
                         if (telemetryManager != null) telemetryManager.startTelemetry();
                     }
+                    // Nota: status intermediários (Registering, Creating...) chegam via
+                    // SessionListener com cor branca — não alteram o estado do botão.
                 });
             }
         });
 
-        // 2. Construir stack de comunicação: OneM2MSession sobre WebSocket
-        // session: intercepta eventos de conexão para fazer AE registration e despacha comandos
-        // transport: camada WebSocket raw (okhttp3)
-        OneM2MSession session = new OneM2MSession(flightManager);
+        // 2. Construir stack: OneM2MSession sobre WebSocket (NetworkManager)
+        session   = new OneM2MSession(flightManager);
         NetworkManager transport = new NetworkManager(session);
         session.setTransport(transport);
         protocolClient = session;
 
-        // 2a. Listener de debug para comandos recebidos (exibidos no messageField)
-        protocolClient.setCommandLogListener(new ProtocolClient.CommandLogListener() {
-            @Override
-            public void onCommandReceived(String command, String rawJson) {
-                post(() -> {
-                    messageField.setText("CMD: " + command);
-                    messageField.setTextColor(getResources().getColor(android.R.color.holo_blue_light));
-                    Log.d(TAG, "Received command: " + command + " " + rawJson);
-                });
+        // 2a. SessionListener — actualiza statusField com estados intermédios (branco)
+        session.setSessionListener(msg -> post(() -> {
+            statusField.setText(msg);
+            // Usar branco para estados intermédios; verde/vermelho ficam para os estados finais
+            if (statusField.getCurrentTextColor() != getResources().getColor(android.R.color.holo_green_light)
+                    && statusField.getCurrentTextColor() != getResources().getColor(android.R.color.holo_red_light)) {
+                statusField.setTextColor(getResources().getColor(android.R.color.white));
             }
-        });
+            // Sobrepor sempre com a mensagem actual
+            statusField.setText(msg);
+            statusField.setTextColor(getResources().getColor(android.R.color.white));
+        }));
 
-        // 3. Ligar Telemetria ao Flight Controller
+        // 2b. CommandLogListener — mostra último comando recebido no messageField (azul)
+        protocolClient.setCommandLogListener((command, rawJson) -> post(() -> {
+            messageField.setText("CMD: " + command);
+            messageField.setTextColor(getResources().getColor(android.R.color.holo_blue_light));
+            Log.d(TAG, "Command received: " + command + " " + rawJson);
+        }));
+
+        // 3. TelemetryManager — envia telemetria via protocolClient
         telemetryManager = new TelemetryManager(protocolClient, flightManager.getFlightController());
 
-        // 4. Inicializar Camera Manager
+        // 3a. TickListener — mostra contador TX no messageField a cada 1 s (branco)
+        telemetryManager.setTickListener(seq -> post(() -> {
+            // Só actualizar se não houver uma mensagem de comando recente
+            // (o azul indica que um CMD chegou; voltamos a branco após o tick)
+            messageField.setText("TX: seq=" + seq);
+            messageField.setTextColor(getResources().getColor(android.R.color.white));
+        }));
+
+        // 4. CameraManager
         cameraManager = new CameraManager();
         flightManager.setCameraManager(cameraManager);
 
-        // 5. Obter serial number do drone
+        // 5. Obter serial number do drone e ligar automaticamente ao CSE
         getSerialNumber();
     }
+
+    // ── UI initialization ────────────────────────────────────────────────────
 
     /**
      * Infla o layout e liga os elementos da UI.
      *
-     * @param context o contexto da aplicação
+     * @param context contexto da aplicação
      */
     private void initUI(Context context) {
         setClickable(true);
         setOrientation(HORIZONTAL);
-        LayoutInflater layoutInflater = (LayoutInflater) context.getSystemService(Service.LAYOUT_INFLATER_SERVICE);
-        layoutInflater.inflate(R.layout.view_dboids, this, true);
+        LayoutInflater inflater = (LayoutInflater) context.getSystemService(Service.LAYOUT_INFLATER_SERVICE);
+        inflater.inflate(R.layout.view_dboids, this, true);
 
-        // Inicializar SharedPreferences para persistência entre sessões
         prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
 
         // Botões
-        connectws = findViewById(R.id.connectws);
-        connectws.setOnClickListener(this);
-        startRTMP = findViewById(R.id.startRTMP);
-        startRTMP.setOnClickListener(this);
-        startUDP = findViewById(R.id.startUDP);
-        startUDP.setOnClickListener(this);
-        startSimulator = findViewById(R.id.startSimulator);
-        startSimulator.setOnClickListener(this);
-        abort = findViewById(R.id.abort);
-        abort.setOnClickListener(this);
+        connectws     = findViewById(R.id.connectws);    connectws.setOnClickListener(this);
+        startSimulator = findViewById(R.id.startSimulator); startSimulator.setOnClickListener(this);
+        abort          = findViewById(R.id.abort);       abort.setOnClickListener(this);
 
         // Campos de texto
+        statusField  = findViewById(R.id.statusField);
         messageField = findViewById(R.id.messageField);
-        statusField = findViewById(R.id.statusField);
-        hostname = findViewById(R.id.websocketUrl);
+        hostname     = findViewById(R.id.websocketUrl);
 
-        // Carregar host do CSE das preferências ou usar o valor por defeito
-        String savedUrl = prefs.getString(KEY_SERVER_URL, null);
-        if (savedUrl == null || savedUrl.isEmpty()) {
-            savedUrl = DEFAULT_CSE_HOST;
-        }
-        hostname.setText(savedUrl);
+        // Restaurar host do CSE das preferências
+        String saved = prefs.getString(KEY_SERVER_URL, null);
+        hostname.setText((saved == null || saved.isEmpty()) ? DEFAULT_CSE_HOST : saved);
 
-        // Feed de vídeo
         initVideoFeed();
     }
 
     /**
-     * Liga a view ao feed de vídeo principal do drone.
-     *
-     * <p>O {@link VideoFeedView} decodifica o stream H.264 e exibe o vídeo
-     * da câmara do drone em tempo real.
+     * Liga a view ao feed de vídeo principal do drone (H.264).
      */
     private void initVideoFeed() {
         primaryVideoFeedView = findViewById(R.id.dboids_primary_videofeed);
@@ -242,31 +248,41 @@ public class DuvopsView extends LinearLayout implements View.OnClickListener {
         }
     }
 
+    // ── Lifecycle ────────────────────────────────────────────────────────────
+
     /**
-     * Obtém o serial number do drone e inicializa o controlador de voo.
+     * Liberta todos os recursos: sessão OneM2M, WebSocket e timer de telemetria.
      *
-     * <p>Após obter o serial number, liga automaticamente ao servidor WebSocket.
+     * <p>Chamado por {@link FlightActivity#onDestroy()} para evitar ghost connections.
+     */
+    public void cleanup() {
+        if (telemetryManager != null) telemetryManager.stopTelemetry();
+        if (session != null) session.shutdown();
+    }
+
+    // ── Connection ───────────────────────────────────────────────────────────
+
+    /**
+     * Obtém o serial number do drone via DJI SDK e liga automaticamente ao CSE.
+     *
+     * <p>Chamado após o produto DJI estar conectado. Se o drone não estiver
+     * disponível, nenhuma ligação é tentada.
      */
     public void getSerialNumber() {
         Aircraft aircraft = (Aircraft) App.getProductInstance();
         if (aircraft != null && aircraft.getFlightController() != null) {
-            // Atualizar a referência de controlador no Manager
             flightManager.initFlightController();
             if (telemetryManager != null) {
                 telemetryManager.setFlightController(flightManager.getFlightController());
             }
-
             aircraft.getFlightController().getSerialNumber(new CommonCallbacks.CompletionCallbackWith<String>() {
                 @Override
                 public void onSuccess(String s) {
                     serialNumber = s;
                     model = DJISDKManager.getInstance().getProduct().getModel().getDisplayName();
                     if (telemetryManager != null) telemetryManager.setModelName(model);
-
-                    // Inicializar gimbal após o controlador de voo ficar disponível
                     flightManager.initGimbal();
-
-                    Log.d("DEBUG", "serialNumber: " + s);
+                    Log.d(TAG, "serialNumber: " + s);
                     connectToCse();
                 }
                 @Override
@@ -280,8 +296,8 @@ public class DuvopsView extends LinearLayout implements View.OnClickListener {
     /**
      * Liga ao ACME CSE usando o host configurado no campo {@code hostname}.
      *
-     * <p>Aceita entradas no formato {@code "192.168.1.100"} ou {@code "192.168.1.100:8180"}.
-     * Prefixos de protocolo (ws://, http://) são removidos automaticamente.
+     * <p>Aceita: {@code "192.168.1.100"} ou {@code "192.168.1.100:8180"}.
+     * Remove prefixos de protocolo se o utilizador os incluir (ws://, http://).
      */
     private void connectToCse() {
         String input = hostname.getText().toString().trim();
@@ -289,9 +305,9 @@ public class DuvopsView extends LinearLayout implements View.OnClickListener {
             input = DEFAULT_CSE_HOST;
             hostname.setText(DEFAULT_CSE_HOST);
         }
-        // Remover prefixo de protocolo se o utilizador o tiver escrito
+        // Remover prefixo de protocolo
         String host = input.replaceAll("^(ws|wss|http|https)://", "");
-        // Separar port do host, se presente (ex: "192.168.1.100:8180")
+        // Separar port do host, se presente
         int port = DEFAULT_CSE_WS_PORT;
         int colonIdx = host.lastIndexOf(':');
         if (colonIdx > 0) {
@@ -304,69 +320,51 @@ public class DuvopsView extends LinearLayout implements View.OnClickListener {
         protocolClient.connect(host, port, serialNumber);
     }
 
+    // ── Click handling ───────────────────────────────────────────────────────
+
     /**
      * Processa cliques nos botões da UI.
      *
-     * @param v a vista clicada
+     * @param v vista clicada
      */
     @Override
     public void onClick(View v) {
         switch (v.getId()) {
+
             case R.id.connectws:
-                connectToCse();
+                // Toggle: se sessão activa → desligar; caso contrário → ligar
+                if (sessionReady) {
+                    sessionReady = false;
+                    connectws.setText("Connect CSE");
+                    if (telemetryManager != null) telemetryManager.stopTelemetry();
+                    protocolClient.disconnect();
+                    statusField.setText("Disconnected by user.");
+                    statusField.setTextColor(getResources().getColor(android.R.color.white));
+                } else {
+                    connectToCse();
+                }
                 break;
 
             case R.id.startSimulator:
-                // Inicia o simulador com coordenadas fixas de teste
+                // Inicia o simulador DJI com coordenadas fixas (IPL Leiria)
                 if (flightManager.getFlightController() != null) {
                     flightManager.getFlightController().getSimulator().start(
                             dji.common.flightcontroller.simulator.InitializationData.createInstance(
-                                    new dji.common.model.LocationCoordinate2D(39.933219, -8.892509), 10, 10),
+                                    new dji.common.model.LocationCoordinate2D(39.933219, -8.892509),
+                                    10, 10),
                             djiError -> ToastUtils.setResultToToast(
                                     djiError != null ? djiError.getDescription() : "Simulator started"));
                 }
                 break;
 
             case R.id.abort:
-                // Termina a aplicação — usar apenas em emergência
+                // Terminar a app de emergência — limpa recursos antes de sair
+                cleanup();
                 System.exit(0);
-                break;
-
-            case R.id.startRTMP:
-                startRTMPStream();
                 break;
 
             default:
                 break;
         }
-    }
-
-    /**
-     * Inicia o stream RTMP para streaming de vídeo ao vivo.
-     *
-     * <p>Configura:
-     * <ul>
-     *   <li>URL: {@code rtmp://<server>:1935/<serialNumber>}</li>
-     *   <li>Resolução: 1080p</li>
-     *   <li>Bitrate: auto</li>
-     *   <li>Áudio: desativado</li>
-     * </ul>
-     */
-    public void startRTMPStream() {
-        if (DJISDKManager.getInstance().getLiveStreamManager() == null) return;
-
-        LiveStreamManager streamManager = DJISDKManager.getInstance().getLiveStreamManager();
-        if (streamManager.isStreaming()) streamManager.stopStream();
-
-        new Thread(() -> {
-            streamManager.setLiveUrl("rtmp://" + hostname.getText().toString() + ":1935/" + serialNumber);
-            streamManager.setAudioStreamingEnabled(false);
-            streamManager.setLiveVideoResolution(LiveVideoResolution.VIDEO_RESOLUTION_1920_1080);
-            streamManager.setLiveVideoBitRateMode(LiveVideoBitRateMode.AUTO);
-            streamManager.setLiveVideoBitRate(1.5f * 1024);
-            streamManager.setStartTime();
-            int result = streamManager.startStream();
-            Log.d(TAG, "startLive Result:" + result);
-        }).start();
     }
 }

@@ -342,7 +342,11 @@ public class MainContent extends RelativeLayout {
                         case MSG_UPDATE_BLUETOOTH_CONNECTOR:
                             connector = App.getBluetoothProductConnector();
                             if (connector != null) {
-                                mBtnBluetooth.post(() -> mBtnBluetooth.setEnabled(true));
+                                // mBtnBluetooth is intentionally hidden (visibility=gone) —
+                                // null-check prevents NPE if layout is changed in the future
+                                if (mBtnBluetooth != null) {
+                                    mBtnBluetooth.post(() -> mBtnBluetooth.setEnabled(true));
+                                }
                                 return;
                             } else if ((System.currentTimeMillis() - System.currentTimeMillis()) >= 5000) {
                                 DialogUtils.showDialog(getContext(), "Fetch Connector failed, reboot if you want to connect the Bluetooth");

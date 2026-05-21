@@ -188,6 +188,31 @@ public class TelemetryManager {
     private final AtomicInteger seqCounter = new AtomicInteger(0);
 
     /**
+     * Callback de tick lento (1 s) para actualizar a UI com o contador de telemetria.
+     *
+     * <p>Chamado a cada 4 ticks (1 s) com o valor actual do {@code seq}.
+     * Definido por {@code DuvopsView} para mostrar "TX: seq=N" no {@code messageField}.
+     */
+    public interface TelemetryTickListener {
+        /**
+         * @param seq valor actual do contador de sequência
+         */
+        void onSlowTick(int seq);
+    }
+
+    /** Listener de tick lento — pode ser {@code null}. */
+    private TelemetryTickListener tickListener;
+
+    /**
+     * Define o listener de tick lento.
+     *
+     * @param listener listener a notificar a cada 1 s (pode ser {@code null})
+     */
+    public void setTickListener(TelemetryTickListener listener) {
+        this.tickListener = listener;
+    }
+
+    /**
      * Cria um novo gestor de telemetria.
      *
      * @param protocolClient cliente de protocolo para envio de dados ao CSE
@@ -364,7 +389,13 @@ public class TelemetryManager {
         timer.schedule(new TimerTask() {
             @Override
             public void run() {
-                if (tickCount % 4 == 0) updateSlowData();
+                if (tickCount % 4 == 0) {
+                    updateSlowData();
+                    // Notificar a UI com o seq actual (taxa ≈ 1 s)
+                    if (tickListener != null) {
+                        tickListener.onSlowTick(seqCounter.get());
+                    }
+                }
                 tickCount++;
                 collectAndSend();
             }
