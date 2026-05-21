@@ -91,23 +91,30 @@ Timestamps for latency (`t_command`, `t_ack`) must be taken with `time.monotonic
 converted to milliseconds — not `time.time()`, which can jump due to NTP.
 
 ### HTTP client
-- POST to `http://{CSE_HOST}:{CSE_HTTP_PORT}/onem2m/uxv/commands`
-- Content-Type: `application/json;ty=4` (OneM2M contentInstance)
-- Latency: time from POST call to receiving HTTP 201 response
+- POST to `http://{CSE_HOST}:{CSE_HTTP_PORT}/cse-in/uxv/commands`
+  (NOT `/onem2m/...` or `/id-in/...` — see `docs/ai-context/cse-dev.md` → URL Structure)
+- Headers: `X-M2M-RI`, `X-M2M-Origin: CAdmin`, `X-M2M-RVI: 3`, `Content-Type: application/json;ty=4`
+- Body: `{"m2m:cin": {"con": "{\"command\":\"takeoff\",\"seq_cmd\":1,\"t_cmd_ms\":...}"}}`
+  (no `cnf` field — fails validation in ACME CSE v2025.11)
+- Latency: Streamlit records `t_cmd_ms`; Android sends back `t_recv_ms` in ACK CIN
 
 ### MQTT client
-- Publish to `onem2m/uxv/commands` at QoS 1
-- Subscribe to `onem2m/uxv/telemetry/#` for ACK/telemetry
-- Latency: time from publish to receiving the subscription notification
+- Publish commands to `/oneM2M/req/CAdmin/id-in/json` (request topic)
+- Subscribe to `/oneM2M/resp/CAdmin/id-in/json` (response topic)
+- Subscribe to ack CINs via separate subscription on `/cse-in/uxv/ack`
+- Telemetry: subscribe to `/cse-in/uxv/telemetry` via separate oneM2M subscription
+- Note: topic format is `{originator}/{cseID}` (originator first) — confirmed empirically
 
 ### WebSocket client
 - Connect to `ws://{CSE_HOST}:{CSE_WS_PORT}/`
-- Send JSON frame; listen for notification frame
-- Keep-alive: 30 s ping interval
+- Subprotocol: `oneM2M.json` (required — server returns 400 without it)
+- Header: `X-M2M-Origin: CAdmin` in upgrade request
+- Format: flat JSON (no `m2m:rqp` wrapper), `rvi="3"` mandatory
+- Subscribe to `/cse-in/uxv/telemetry` and `/cse-in/uxv/ack` via oneM2M SUB resources
 
 ### CoAP client
-- POST to `coap://{CSE_HOST}:{CSE_COAP_PORT}/onem2m/uxv/commands`
-- Use Confirmable (CON) messages
+- POST to `coap://{CSE_HOST}:{CSE_COAP_PORT}/cse-in/uxv/commands`
+- Use Confirmable (CON) messages; no DTLS (not implemented in ACME CSE v2025.11)
 - Latency: time from POST to receiving ACK
 - `aiocoap` is async — wrap with `asyncio.run()` or run in a thread
 
@@ -193,10 +200,38 @@ operator notes, random seed (if any). This is required for paper reproducibility
 
 ---
 
-## What Depends on the Android App
+## Android App Integration — Confirmed Facts
 
-Once the Android app is reviewed:
-- Confirm the exact OneM2M resource paths the app registers (AE name, container names)
-- Confirm subscription mechanism: does the app use a permanent subscription created at
-  startup, or does it poll? This affects how the dashboard sends commands.
-- Align the JSON command payload schema with what the DJI SDK expects
+The Android app has been reviewed and tested. Key facts for the Streamlit frontend:
+
+**Resource paths (HTTP):**
+- Telemetry CINs: `GET /cse-in/uxv/telemetry/la` (latest) or subscribe
+- Command CINs: `POST /cse-in/uxv/commands` (Streamlit sends commands here)
+- ACK CINs: `GET /cse-in/uxv/ack` or subscribe (Streamlit reads ACKs here)
+
+**Command payload** (what Android expects in CIN.con):
+```json
+{"command": "takeoff", "seq_cmd": 1, "t_cmd_ms": 1748000000000}
+```
+- `seq_cmd`: sequence number assigned by Streamlit (for loss detection)
+- `t_cmd_ms`: `int(time.time() * 1000)` at send time
+
+**ACK payload** (what Android puts in ack CIN.con):
+```json
+{"command": "takeoff", "seq_cmd": 1, "t_cmd_ms": 1748000000000,
+ "t_recv_ms": 1748000000087, "t_exec_ms": 1748000000092}
+```
+- Latency = `t_recv_ms - t_cmd_ms` (device-to-device, no NTP dependency)
+
+**Telemetry rate control** (Scenario 1):
+```json
+{"command": "setTelemetryRate", "intervalMs": 200}
+```
+Rates: 1000ms (1/s), 200ms (5/s), 100ms (10/s)
+
+**Subscription mechanism:** The Android app creates a permanent oneM2M SUB resource
+(`/cse-in/uxv/commands/sub-commands`) on startup. Streamlit sends commands by POSTing
+CINs to `/cse-in/uxv/commands` — the CSE delivers notifications automatically.
+
+**Full command reference:** `src/android/docs/command-reference.md`
+**Full telemetry reference:** `src/android/docs/telemetry-reference.md`

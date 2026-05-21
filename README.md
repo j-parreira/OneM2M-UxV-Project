@@ -39,12 +39,12 @@ application. Results will be submitted as an IEEE/ACM conference paper.
 
 ## Protocols Under Test
 
-| Protocol  | Port      | Transport | OneM2M Binding |
-|-----------|-----------|-----------|----------------|
-| MQTT      | 1883      | TCP       | AE ↔ CSE pub/sub |
-| WebSocket | 80 / 443  | TCP       | Bidirectional stream |
-| HTTP      | 8080      | TCP       | RESTful resources |
-| CoAP      | 5683      | UDP       | Constrained messaging |
+| Protocol | Port | Transport | OneM2M Binding | Status |
+|---|---|---|---|---|
+| WebSocket | 8180 | TCP | Persistent; flat JSON; `oneM2M.json` subprotocol | ✅ Implemented |
+| MQTT | 1883 | TCP | AE client → Mosquitto broker → CSE MQTT client | 🔜 Next |
+| HTTP | 8080 | TCP | RESTful resources; `/cse-in/...` paths | 🔜 Planned |
+| CoAP | 5683 | UDP | Confirmable messages; DTLS not used in v2025.11 | 🔜 Planned |
 
 ## Performance Metrics
 
@@ -97,12 +97,18 @@ Each Python sub-project uses its own isolated virtual environment.
 
 ```bash
 cd src/cse
-python -m venv .venv
-source .venv/bin/activate          # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
-python -m acmecse
-# CSE starts at http://localhost:8080/
+docker compose up --build
+# Wait ~45s for containers to be healthy
+
+# Smoke test (CSE ready when this returns HTTP 200 with "ty":5):
+curl http://localhost:8080/id-in \
+  -H "X-M2M-RI: t" -H "X-M2M-Origin: CAdmin" -H "X-M2M-RVI: 3"
+
+# Web UI (resource tree browser):
+# http://localhost:8080/webui
 ```
+
+Requires Docker Desktop. See `src/cse/README.md` for full details.
 
 ### Streamlit Dashboard
 
@@ -129,6 +135,17 @@ pip install -r requirements.txt
 
 Open `src/android/` in Android Studio. Requires DJI SDK v4 and a valid DJI developer API key
 (set in `local.properties`, never committed).
+
+## Current State
+
+| Component | Status | Notes |
+|---|---|---|
+| `src/android/` | ✅ Complete | WebSocket OneM2M AE, tested against real CSE (9/9 flow tests) |
+| `src/cse/` | ✅ Complete | All 4 protocols active; v2025.11 integration verified |
+| `src/frontend/` | 🔜 Not built | Streamlit benchmark orchestrator — next priority |
+| `src/analysis/` | 🔜 Not built | Analysis pipeline — after data collection |
+
+**Deadline:** 2026-06-06 (course paper, Mobilidade em Sistemas Computacionais)
 
 ## Academic Context
 
