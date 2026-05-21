@@ -125,17 +125,14 @@ connect(host, 8180, serialNumber)
           "voltage": 16800, "current": 250},
   "gimbal": {"pitch": -45.0, "roll": 0.0, "yaw": 12.3},
   "rcBat": {"lvl": 90, "remainingMah": 3200, "charging": false},
-  "zoom": 2.5, "cameraMode": "RGB"
+  "zoom": 2.5, "cameraMode": "RGB",
+  "seq": 1234,
+  "t_send_ms": 1748000000000
 }
 ```
+> `seq` — contador monotónico (reinicia por sessão); gaps no servidor = packet loss  
+> `t_send_ms` — `System.currentTimeMillis()` no momento do envio; latência one-way se NTP sincronizado  
 > Referência completa: `docs/telemetry-reference.md`
-
-**Campos a adicionar (ainda não implementados — críticos para benchmark)**:
-```json
-"seq": 1234,          // sequência monotónica — packet loss = gaps no servidor
-"t_send_ms": 1748000000000  // epoch ms no momento do envio
-```
-Adicionar em `TelemetryManager.collectAndSend()`.
 
 **Comandos** chegam via notificação OneM2M (campo `con` do `m2m:cin`):
 ```json
@@ -169,7 +166,7 @@ Adicionar em `TelemetryManager.collectAndSend()`.
 
 | Item | Onde | Prioridade |
 |---|---|---|
-| Campos `seq` + `t_send_ms` na telemetria | `TelemetryManager.collectAndSend()` | **Alta** — sem eles não há métricas de packet loss |
+| ~~Campos `seq` + `t_send_ms` na telemetria~~ | ✅ Implementado | — |
 | Reconnect automático | `OneM2MSession.onConnectionStatusChange(false)` | **Alta** — benchmark não pode parar por WiFi glitch |
 | Timeout na registration sequence | `OneM2MSession.pendingCallbacks` | **Média** — sessão fica suspensa se CSE não responder |
 | Protocol selector UI | `DuvopsView` (spinner/dropdown) | **Média** — actualmente hardcoded WebSocket |

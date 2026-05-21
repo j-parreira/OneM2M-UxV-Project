@@ -1,6 +1,7 @@
 # Referência de Telemetria
 
-> Todos os campos enviados pela app para o servidor via WebSocket a cada 250ms.
+> Todos os campos enviados pela app para o ACME CSE via OneM2M contentInstance a cada 250ms.
+> O JSON abaixo é o conteúdo do campo `con` dentro do `m2m:cin`.
 
 ## Estrutura do JSON
 
@@ -42,7 +43,9 @@
     "charging": false
   },
   "zoom": 1.0,
-  "cameraMode": "RGB"
+  "cameraMode": "RGB",
+  "seq": 1234,
+  "t_send_ms": 1748000000000
 }
 ```
 
@@ -114,6 +117,13 @@
 | `cameraMode` | `string` | Modo atual da câmara | `"RGB"`, `"IR"`, `"SPLIT"` |
 | `zoom` | `float` | Fator de zoom atual | 1.0 a 32.0 |
 
+### Campos de benchmark
+
+| Campo | Tipo | Descrição | Notas |
+|---|---|-|---|
+| `seq` | `int` | Número de sequência monotónico (começa em 1) | Reinicia quando a sessão OneM2M é criada; gaps = mensagens perdidas |
+| `t_send_ms` | `long` | Timestamp de envio em epoch ms — `System.currentTimeMillis()` | Útil para latência one-way se relógios sincronizados via NTP |
+
 ---
 
 ## Exemplos de payloads
@@ -146,7 +156,9 @@
   },
   "rcBat": { "lvl": 92, "remainingMah": 3200, "charging": false },
   "zoom": 1.0,
-  "cameraMode": "RGB"
+  "cameraMode": "RGB",
+  "seq": 1,
+  "t_send_ms": 1748000000000
 }
 ```
 
@@ -174,7 +186,9 @@
   "gimbal": { "pitch": -45.0, "roll": 0.0, "yaw": 180.5 },
   "rcBat": { "lvl": 90, "remainingMah": 3000, "charging": false },
   "zoom": 2.5,
-  "cameraMode": "RGB"
+  "cameraMode": "RGB",
+  "seq": 120,
+  "t_send_ms": 1748000030000
 }
 ```
 

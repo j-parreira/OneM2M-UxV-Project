@@ -2,7 +2,13 @@
  * {@code TelemetryManager} — Coleção e envio de telemetria do drone.
  *
  * Recebe dados de telemetria via DJI SDK (posição, velocidade, bateria, gimbal, camera),
- * polled a 250ms, e envia via WebSocket como JSON para o servidor remoto.
+ * polled a 250ms, e envia via {@link com.dji.sdk.duvops.network.ProtocolClient} como JSON.
+ *
+ * <h3>Campos de benchmark</h3>
+ * <ul>
+ *   <li>{@code seq} — número de sequência monotónico; permite calcular packet loss no servidor</li>
+ *   <li>{@code t_send_ms} — epoch ms no momento do envio; para cálculo de latência one-way</li>
+ * </ul>
  *
  * <h3>Campos de bateria do drone</h3>
  * <ul>
@@ -20,7 +26,7 @@
  * </ul>
  *
  * @author Joao Parreira
- * @version 3.0
+ * @version 4.0
  */
 package com.dji.sdk.duvops.flight;
 
@@ -34,6 +40,7 @@ import org.json.JSONObject;
 
 import java.util.Timer;
 import java.util.TimerTask;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import dji.common.camera.CameraVideoStreamSource;
 import dji.common.camera.SettingsDefinitions;
@@ -170,6 +177,15 @@ public class TelemetryManager {
 
     /** Nome do modelo do drone (ex: Mavic 2 Enterprise Advanced). */
     private String modelName = "Unknown";
+
+    /**
+     * Contador de sequência para detecção de packet loss no servidor.
+     *
+     * <p>Incrementado atomicamente a cada mensagem enviada; o servidor detecta
+     * mensagens perdidas por gaps no valor de {@code seq}. Reinicia em 0 quando
+     * a sessão é criada (não persiste entre sessões OneM2M).
+     */
+    private final AtomicInteger seqCounter = new AtomicInteger(0);
 
     /**
      * Cria um novo gestor de telemetria.
@@ -513,6 +529,12 @@ public class TelemetryManager {
             // Camera
             status.put("zoom", cameraZoom);
             status.put("cameraMode", cameraMode);
+
+            // Campos de benchmark: sequência e timestamp de envio
+            // seq: detectar packet loss — gaps indicam mensagens perdidas
+            // t_send_ms: latência one-way quando relógios sincronizados via NTP
+            status.put("seq", seqCounter.incrementAndGet());
+            status.put("t_send_ms", System.currentTimeMillis());
 
             protocolClient.sendTelemetry(status.toString());
 
