@@ -100,10 +100,10 @@ connect(host, 8180, serialNumber)
 
 **Subscrição de comandos**:
 - Container: `/id-in/uxv/commands`
-- `nu`: `/id-in/uxv` (notificação entregue na mesma ligação WS)
+- `nu`: **`aeOriginator`** (ex: `C3LKFD12ABC`) — NÃO o URI `/id-in/uxv`
 - `enc.net = [3]`: notificar na criação de filho directo (novo CIN)
-- ⚠️ O campo `nu` pode precisar de ajuste dependendo da versão do ACME CSE —
-  se as notificações não chegarem, tentar `nu = [aeOriginator]`
+- ACME CSE associa ligações WebSocket ao originator. Usar o URI do recurso cria
+  a subscrição mas as notificações **nunca chegam** — bug confirmado e corrigido.
 
 **Telemetria** (250 ms → `m2m:cin` em `/id-in/uxv/telemetry`):
 ```json

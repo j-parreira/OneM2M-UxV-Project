@@ -51,6 +51,66 @@ All four protocols must be enabled in `acme.ini`. The CSE listens on:
 > **CoAP gotcha:** Docker requires explicit `/udp` suffix — `5683:5683/udp`. Without it,
 > only TCP is exposed and CoAP silently fails.
 
+> **CoAP DTLS:** Not fully implemented in v2025.11 (TODO comments in `CoAPServer.py`).
+> Use `useDTLS=false` (default). Do not configure CoAP certificates.
+
+---
+
+## MQTT Topic Structure
+
+Required for implementing `MqttProtocolClient` on Android. All topics use JSON serialisation.
+
+| Direction | Topic | Example |
+|---|---|---|
+| AE → CSE (request) | `/oneM2M/req/{originator}/{cseID}/json` | `/oneM2M/req/C3LKFD12/id-in/json` |
+| CSE → AE (response) | `/oneM2M/resp/{cseID}/{originator}/json` | `/oneM2M/resp/id-in/C3LKFD12/json` |
+| AE registration | `/oneM2M/reg_req/{originator}/{cseID}/json` | `/oneM2M/reg_req/C3LKFD12/id-in/json` |
+| CSE → AE (notification) | `/oneM2M/req/{cseID}/{originator}/json` | `/oneM2M/req/id-in/C3LKFD12/json` |
+
+The Android `MqttProtocolClient` must **subscribe to** `/oneM2M/req/{cseID}/{aeOriginator}/#`
+to receive command notifications. The `nu` field in subscriptions must be the MQTT topic URI:
+`mqtt://{broker}:{port}/oneM2M/req/{cseID}/{aeOriginator}/json`
+or simply the originator (ACME CSE resolves it internally).
+
+**Topic prefix:** optional `topicPrefix` in `[mqtt]` for multi-CSE deployments (leave empty for single-CSE benchmark).
+
+---
+
+## WebSocket Subscription — `nu` Field
+
+**Critical:** the `nu` (notification URI) in a subscription must be the **AE originator**
+(e.g. `C3LKFD12ABC`), NOT the AE resource URI (`/id-in/uxv`).
+
+ACME CSE associates WebSocket connections by originator. When a notification fires,
+it looks up the connection whose originator matches `nu`. Using the AE resource URI
+results in the subscription being created successfully but **notifications never delivered**.
+
+```java
+// CORRECT — in OneM2MSession.createSubscription()
+.put("nu", new JSONArray().put(aeOriginator))   // e.g. "C3LKFD12ABC"
+
+// WRONG — was incorrectly used before the fix
+.put("nu", new JSONArray().put(CSE_BASE + "/" + AE_NAME))  // "/id-in/uxv"
+```
+
+**Subscription verification:** when `enableSubscriptionVerificationRequests=true` (default),
+the CSE sends a NOTIFY with `vrq=true` immediately after subscription creation. The Android
+app's `sendNotifyAck()` handles this correctly — it ACKs any `op=5` NOTIFY regardless of
+whether it contains `nev` (event data) or just `vrq` (verification).
+
+---
+
+## MQTT over WebSocket (v2025.11 new feature)
+
+New `[mqtt.websocket]` section enables MQTT protocol over WebSocket transport on a separate port (default 9001). Useful for clients that can only use WebSocket but want MQTT pub/sub semantics. Not currently used in the benchmark but available if needed.
+
+```ini
+; Uncomment to enable MQTT over WebSocket
+; [mqtt.websocket]
+; enable = true
+; port   = 9001
+```
+
 ---
 
 ## Resource Tree
@@ -82,60 +142,70 @@ O Streamlit subscreve `/id-in/uxv/telemetry` e `/id-in/uxv/ack`; publica em `/id
 
 ## Key `acme.ini` Sections
 
-The official config uses `[basic.config]` as a shared variable block, then per-protocol
-sections. Section names differ from what is intuitive — use exactly these names.
+Section names must be exactly as listed — they differ from what is intuitive.
+See `src/cse/config/acme.ini` for the full annotated configuration.
 
 ```ini
 [basic.config]
-cseType         = IN
-cseID           = id-in
-cseName         = cse-in
-adminID         = CAdmin
-networkInterface = 0.0.0.0
-cseHost         = ${hostIPAddress}    ; resolved at runtime by ACME CSE
-httpPort        = 8080
-logLevel        = info
-databaseType    = tinydb
-consoleTheme    = light
+cseType           = IN
+cseID             = id-in
+cseName           = cse-in
+serviceProviderID = //uxv.benchmark   ; affects TinyDB filename in v2025.11
+adminID           = CAdmin
+dataDirectory     = ${baseDirectory}  ; resolves to /data (from -dir /data)
+networkInterface  = 0.0.0.0
+cseHost           = ${hostIPAddress}  ; NO inline comments on this line — parser bug
+httpPort          = 8080
+logLevel          = info
+databaseType      = tinydb
+
+[cse]
+defaultSerialization             = json
+asyncSubscriptionNotifications   = true
+enableSubscriptionVerificationRequests = true
 
 [http]
-; section name is [http], NOT [server.http]
-port            = ${basic.config:httpPort}
-listenIF        = ${basic.config:networkInterface}
-address         = http://${basic.config:cseHost}:${basic.config:httpPort}
+port             = ${basic.config:httpPort}
+listenIF         = ${basic.config:networkInterface}
+address          = http://${basic.config:cseHost}:${basic.config:httpPort}
 enableManagementEndpoint = true
 
 [mqtt]
-; section name is [mqtt], NOT [server.mqtt]
-; ACME CSE is an MQTT CLIENT — set address to the Mosquitto broker service name
-enable          = true
-address         = mosquitto           ; Docker Compose service name for the broker
-port            = 1883
+enable           = true
+address          = mosquitto
+port             = 1883
 
 [websocket]
-; section name is [websocket], NOT [server.websocket]
-enable          = true
-port            = 8180
-listenIF        = 0.0.0.0
-address         = ws://${basic.config:cseHost}:8180
+enable           = true
+port             = 8180
+listenIF         = 0.0.0.0
+address          = ws://${basic.config:cseHost}:8180
 
 [coap]
-; section name is [coap], NOT [server.coap]
-enable          = true
-port            = 5683
-listenIF        = ${basic.config:networkInterface}
-address         = coap://${basic.config:cseHost}:5683
+enable                  = true
+port                    = 5683
+listenIF                = ${basic.config:networkInterface}
+address                 = coap://${basic.config:cseHost}:5683
+clientConnectionCacheSize = 200
 
 [database]
-type            = ${basic.config:databaseType}
+type             = ${basic.config:databaseType}
 
 [database.tinydb]
-; file-based DB, persisted in a Docker volume mounted at /data
-path            = /data/db
+path             = /data/db
+writeDelay       = 10
+
+[cse.registration]
+allowedAEOriginators  = C*,S*,/id-in/C*
+allowedCSROriginators = /id-mn
 
 [textui]
-startWithTUI    = False               ; required for headless Docker operation
+startWithTUI     = False
 ```
+
+> **Parser gotcha:** inline comments (`;`) on the same line as a value are included in the
+> value by ACME CSE's config parser. `cseHost = ${hostIPAddress} ; comment` produces
+> `poa: ["http://172.18.0.3 ; comment:8080"]`. Always put comments on separate lines.
 
 > Parameters not listed here: use ACME CSE defaults unless a specific reason to change.
 

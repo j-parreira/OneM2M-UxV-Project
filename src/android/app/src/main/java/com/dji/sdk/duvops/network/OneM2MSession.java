@@ -587,13 +587,16 @@ public class OneM2MSession implements ProtocolClient, DroneCommandListener {
     /**
      * Passo 4: subscrição ao container de comandos.
      *
-     * <p>⚠ Se as notificações não chegarem, experimentar {@code nu = [aeOriginator]}.
+     * <p>O CSE entrega notificações via WebSocket quando um novo CIN é criado em
+     * {@code /id-in/uxv/commands}. O campo {@code nu} deve ser o **originator** do AE
+     * (ex: {@code C3LKFD12ABC}), não o URI do recurso AE ({@code /id-in/uxv}).
      *
-     * <p>O CSE entrega notificações via WebSocket quando um novo CIN
-     * é criado em {@code /id-in/uxv/commands}.
+     * <p>O ACME CSE associa ligações WebSocket ao originator — só entrega a notificação
+     * na ligação cujo originator coincide com o {@code nu}. Usar o URI do recurso
+     * resulta em subscrição criada mas notificações nunca entregues.
      *
-     * <p>⚠ Se as notificações não chegarem, experimentar {@code nu = [aeOriginator]}
-     * em vez de {@code nu = [CSE_BASE + "/" + AE_NAME]}.
+     * <p>O CSE envia um NOTIFY de verificação ({@code vrq=true}) após criar a subscrição.
+     * O {@link #sendNotifyAck} responde com 2000 OK, confirmando o endpoint.
      */
     private void createSubscription() {
         notifyStatus("Creating subscription...");
@@ -601,14 +604,14 @@ public class OneM2MSession implements ProtocolClient, DroneCommandListener {
             JSONObject pc = new JSONObject()
                     .put("m2m:sub", new JSONObject()
                             .put("rn",  "sub-commands")
-                            // net=3: notificar na criação de filho directo (novo CIN)
+                            // net=3: notificar na criação de filho directo (novo CIN de comando)
                             .put("enc", new JSONObject().put("net", new JSONArray().put(3)))
-                            // nu: endereço de entrega da notificação (mesmo WS)
-                            .put("nu",  new JSONArray().put(CSE_BASE + "/" + AE_NAME))
-                            // nct=2: incluir todos os atributos na notificação
+                            // nu = aeOriginator: ACME CSE entrega na ligação WS do originator
+                            .put("nu",  new JSONArray().put(aeOriginator))
+                            // nct=2: incluir todos os atributos do CIN na notificação
                             .put("nct", 2));
             sendRequest(OP_CREATE, CSE_BASE + "/" + AE_NAME + "/commands", TY_SUB, pc,
-                    this::createAckContainer);  // → passo 5 antes de onSessionReady
+                    this::createAckContainer);
         } catch (JSONException e) { Log.e(TAG, "createSubscription: " + e.getMessage()); }
     }
 
