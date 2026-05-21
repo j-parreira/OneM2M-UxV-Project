@@ -1,484 +1,449 @@
-# CLAUDE.md
+# CLAUDE.md — Android App (`src/android/`)
 
-> Guia de convenções, decisões arquiteturis, e estrutura do projeto dboidsView/DuvopsView.
+> Guia de arquitectura, convenções e integração para o benchmark OneM2M.
+> Esta versão da app foi adaptada do projecto de produção (dboidsView/DuvopsView)
+> para uso académico — benchmarking de protocolos OneM2M com ACME CSE.
 
 ## Build Commands
-- `./gradlew assembleDebug` - Build debug APK
-- `./gradlew assembleRelease` - Build release APK
-- `./gradlew connectedAndroidTest` - Run instrumentation tests
+- `.\gradlew.bat assembleDebug` — Build debug APK (Windows)
+- `.\gradlew.bat assembleRelease` — Build release APK
+- `.\gradlew.bat connectedAndroidTest` — Run instrumentation tests
+
+---
 
 ## Project Overview
 
-Android application for DJI Mavic 2 Enterprise Advanced (M2EA) drones, installed on the remote controller (RC) to enable:
-- **Environmental monitoring**: Aerial surveys, ecological assessments, and conservation operations
-- **Incident control**: Emergency response, disaster assessment, and search/rescue missions
-- **Automated operations**: Waypoint-based mission execution for consistent data collection
+App Android para DJI Mavic 2 Enterprise Advanced (M2EA), instalada no RC (Remote Controller).
+**Neste contexto**, funciona como AE (Application Entity) OneM2M que:
+
+1. Regista-se no ACME CSE ao ligar
+2. Envia telemetria do drone como `m2m:cin` (contentInstance) a cada 250 ms
+3. Recebe comandos de voo via notificações OneM2M (`m2m:sgn`)
+4. Suporta múltiplos protocolos de transporte via interface `ProtocolClient`
+
+Funcionalidades de produção originais (RTMP, LDM mode, bridge mode) estão presentes
+mas são irrelevantes para o benchmark — não modificar nem remover.
+
+---
 
 ## Core Architecture
 
 ### DJI SDK Integration (v4.16.4)
 - **M2EA Specifics**:
-  - Hybrid Zoom implementation (1.0x-32.0x via focal length control)
-  - Telemetry via `TelemetryManager.java` (250ms interval)
-  - Flight management through `FlightManager.java`
+  - Hybrid Zoom: `factor × 240 = focalLength_mm` (24 mm = 1.0×, 7680 mm = 32.0×)
+  - Telemetria via `TelemetryManager` (timer 250 ms, KeySDK listeners)
+  - Voo via `FlightManager` (virtual sticks + PID, missões waypoint)
 - **Camera Control**:
-  - **RGB Mode**: Uses WIDE video stream
-  - **IR Mode**: Uses INFRARED_THERMAL stream
-  - **SPLIT Mode**: PIP with SIDE_BY_SIDE positioning
-  - Zoom conversion: `factor × 240` (24mm = 1.0x)
-- **Mission Execution**:
-  - Waypoint navigation with PID controllers
-    - Parameters: `kp=0.2, ki=0.0001, kd=0.2`
-    - Safety limits: max pitch ±15°
-  - Takeoff/landing as mission start/end actions
-  - Synchronized mission states (RUNNING/PAUSED/STOPPED)
-- **ABI Configuration**:
-  - `armeabi-v7a`/`arm64-v8a` only (critical for DJI native libraries)
-  - Anti-distortion library explicitly excluded
+  - RGB Mode → WIDE video stream
+  - IR Mode → INFRARED_THERMAL stream
+  - SPLIT Mode → PIP (WIDE + INFRARED_THERMAL)
+- **Mission Execution** (PID + virtual sticks):
+  - `kp=0.2, ki=0.0001, kd=0.2`
+  - Estados sincronizados: RUNNING/PAUSED/STOPPED
+  - Distância de paragem: 2 m, Haversine formula
+- **ABI**: `armeabi-v7a` + `arm64-v8a` (obrigatório para .so do DJI SDK)
 
-### WebSocket Protocol
-- **Server URL**:
-  - Default: `www.ciic.pt`
-  - Persisted via `SharedPreferences` (`duvops_prefs` → `server_url`) in `DuvopsView`
-  - URL format: `ws://<server>` (auto-prefixed with `ws://` if missing)
-  - Required header: `dboidsID` (drone serial number)
-  - Connection states: CONNECTED/CLOSING/CLOSED/ERROR (logged in `SocketListener`)
-- **Command Logging** (`NetworkManager.CommandLogListener`):
-  - Notified on every incoming command for debug
-  - `DuvopsView` displays it in `messageField` as `"CMD: <command_name>"` in blue
-- **Telemetry Format** (250ms interval):
-  ```json
-  {
-    "lat": 37.77,
-    "lng": -122.42,
-    "alt": 15.2,
-    "velX": 1.2,
-    "velY": -0.5,
-    "velZ": 0.3,
-    "isFlying": true,
-    "satCount": 18,
-    "rft": 1200.0,
-    "isGoingHome": false,
-    "areMotorsOn": true,
-    "isHomeLocationSet": true,
-    "homeLocation": { "lat": 37.77, "lng": -122.42 },
-    "hdg": 180.5,
-    "isTraveling": false,
-    "model": "Mavic 2 Enterprise Advanced",
-    "bat": { "lvl": 85, "remaining": 3200, "temperature": 38.5, "charging": false, "connectionState": "CONNECTED", "voltage": 16800, "current": 250 },
-    "gimbal": { "pitch": -45.0, "roll": 0.0, "yaw": 12.3 },
-    "rcBat": { "lvl": 90, "remainingMah": 3200, "charging": false },
-    "zoom": 2.5,
-    "cameraMode": "RGB"
+### Communication Layer — ProtocolClient + OneM2M
+
+A comunicação foi refactorizada para uma interface abstracta `ProtocolClient`
+que permite substituir o transporte (WebSocket → MQTT → HTTP → CoAP) sem
+alterar a lógica de voo ou telemetria.
+
+**Stack de comunicação actual:**
+
+```
+DuvopsView / TelemetryManager
+    ↓ ProtocolClient interface
+OneM2MSession           ← gere o protocolo OneM2M (registo AE, CIN, SUB)
+    ↓ NetworkManager    ← transporte WebSocket (okhttp3) raw
+        ↓ SocketListener
+```
+
+**`ProtocolClient` interface** (`network/ProtocolClient.java`):
+```java
+void connect(String host, int port, String aeId);
+void disconnect();
+void sendTelemetry(String jsonPayload);   // OneM2MSession envolve em m2m:cin
+boolean isConnected();
+void setCommandLogListener(CommandLogListener listener);
+```
+
+**Sequência de inicialização OneM2M** (automática após WebSocket abrir):
+```
+connect(host, 8180, serialNumber)
+  → WebSocket abre → registerAE()   [POST /id-in, ty=2]
+  → resp 2001/4105 → createTelemetryContainer()  [POST /id-in/uxv, ty=3, rn=telemetry]
+  → resp 2001/4105 → createCommandsContainer()   [POST /id-in/uxv, ty=3, rn=commands]
+  → resp 2001/4105 → createSubscription()        [POST /id-in/uxv/commands, ty=23]
+  → resp 2001/4105 → onSessionReady()
+  → commandListener.onConnectionStatusChange(true, ...) → startTelemetry()
+```
+
+**CSE host**: configurado no campo `hostname` da `DuvopsView`.
+- Default: `192.168.1.100` (IP da máquina dev na LAN)
+- Persisted em `SharedPreferences` (`duvops_prefs → server_url`)
+- Aceita formato `host` ou `host:port` (port default: 8180 WS)
+
+**Originator OneM2M**: `"C" + serialNumber` (limpo, max 32 chars)
+- Ex: serial `3LKFD12ABC` → originator `C3LKFD12ABC`
+
+**Subscrição de comandos**:
+- Container: `/id-in/uxv/commands`
+- `nu`: `/id-in/uxv` (notificação entregue na mesma ligação WS)
+- `enc.net = [3]`: notificar na criação de filho directo (novo CIN)
+- ⚠️ O campo `nu` pode precisar de ajuste dependendo da versão do ACME CSE —
+  se as notificações não chegarem, tentar `nu = [aeOriginator]`
+
+**Telemetria** (250 ms → `m2m:cin` em `/id-in/uxv/telemetry`):
+```json
+{
+  "m2m:rqp": {
+    "op": 1, "to": "/id-in/uxv/telemetry", "fr": "CserialXYZ",
+    "rqi": "rqi-42", "ty": 4,
+    "pc": {
+      "m2m:cin": {
+        "cnf": "application/json",
+        "con": "{ <telemetry JSON abaixo> }"
+      }
+    }
   }
-  ```
-  *20+ fields with `bat` (drone) and `rcBat` (RC) sub-objects. Full reference: `docs/telemetry-reference.md`*
-- **Full Command Reference**:
-  - `{"command": "takeoff"}`
-  - `{"command": "land"}`
-  - `{"command": "setZoom", "factor": 2.5}` (1.0-32.0x)
-  - `{"command": "setCameraMode", "mode": "IR"}` (RGB/IR/SPLIT)
-  - `{"command": "startMission", "startAction": "takeoff", "endAction": "land", "path": [{"lat": 37.77, "lng": -122.42}], "altitude": 50, "repeat": 1}`
-  - `{"command": "stopMission"}`
-  - `{"command": "pauseMission"}`
-  - `{"command": "virtualSticksInput", "roll": 0.5, "pitch": 0.3, "yaw": 0, "throttle": 0.2}`
-  - `{"command": "gpsInput", "lat": 37.77, "lng": -122.42}`
-  - `{"command": "perform360"}`
-  - `{"command": "startRTMP"}`
-  - `{"command": "identify", "state": true}`
-  - `{"command": "gimbalAngle", "pitch": -45, "yaw": 0, "mode": "absolute"}` (pitch: -90 to +30, yaw: -75 to +75)
-  - `{"command": "gimbalReset"}` (return to neutral)
-  - `{"command": "motors", "state": true/false}` (motor on/off)
+}
+```
 
-## UI Architecture
+**Telemetry JSON** (campo `con`, 20+ campos):
+```json
+{
+  "lat": 39.933, "lng": -8.892, "alt": 15.2,
+  "velX": 1.2, "velY": -0.5, "velZ": 0.3,
+  "isFlying": true, "satCount": 18, "rft": 1200.0,
+  "isGoingHome": false, "areMotorsOn": true,
+  "isHomeLocationSet": true, "homeLocation": {"lat": 39.933, "lng": -8.892},
+  "hdg": 180.5, "isTraveling": false,
+  "model": "Mavic 2 Enterprise Advanced",
+  "bat": {"lvl": 85, "remaining": 3200, "temperature": 38.5,
+          "charging": false, "connectionState": "CONNECTED",
+          "voltage": 16800, "current": 250},
+  "gimbal": {"pitch": -45.0, "roll": 0.0, "yaw": 12.3},
+  "rcBat": {"lvl": 90, "remainingMah": 3200, "charging": false},
+  "zoom": 2.5, "cameraMode": "RGB"
+}
+```
+> Referência completa: `docs/telemetry-reference.md`
 
-### Main Interface (New)
-- **Class**: `DuvopsView.java` — **active target for bug fixes**
-- **Key Components**:
-  - WebSocket connection manager (`connectws` button)
-  - RTMP streaming controller
-  - Simulator launcher (fixed coordinates: 39.933219, -8.892509)
-  - Status display with color-coded feedback (red/green)
-- **Component Wiring**:
-  ```
-  NetworkManager → FlightManager → TelemetryManager/CameraManager
-  ```
-- **Video Feed**:
-  - Primary feed via `VideoFeedView`
-  - RTMP configuration: 1080p, 1.5Mbps bitrate
+**Campos a adicionar (ainda não implementados — críticos para benchmark)**:
+```json
+"seq": 1234,          // sequência monotónica — packet loss = gaps no servidor
+"t_send_ms": 1748000000000  // epoch ms no momento do envio
+```
+Adicionar em `TelemetryManager.collectAndSend()`.
 
-### Main Interface (Legacy Reference)
-- **Class**: `DboidsView.java` — **READ ONLY, never edit**
-- Monolithic legacy implementation (single file, ~1200 lines)
-- All logic (WebSocket, mission, virtual sticks, RTMP, telemetry) inline
-- Used as implementation reference for features not yet migrated to DuvopsView
+**Comandos** chegam via notificação OneM2M (campo `con` do `m2m:cin`):
+```json
+{"command": "takeoff"}
+{"command": "land"}
+{"command": "setZoom", "factor": 2.5}
+{"command": "setCameraMode", "mode": "IR"}
+{"command": "startMission", "startAction": "takeoff", "endAction": "land",
+ "path": [{"lat": 39.933, "lng": -8.892}], "altitude": 50, "repeat": 1}
+{"command": "stopMission"}
+{"command": "pauseMission"}
+{"command": "virtualSticksInput", "roll": 0.5, "pitch": 0.3, "yaw": 0, "throttle": 0.2}
+{"command": "gpsInput", "lat": 39.933, "lng": -8.892}
+{"command": "perform360"}
+{"command": "identify", "state": true}
+{"command": "gimbalAngle", "pitch": -45, "yaw": 0, "mode": "absolute"}
+{"command": "gimbalReset"}
+{"command": "motors", "state": true}
+```
+> Referência completa: `docs/command-reference.md`
 
-### Mission Control
-- **Layout**: `view_mission.xml`
-- **Key Elements**:
-  - Mission progress bar (`pb_mission`)
-  - Action buttons: Start/Pause/Resume/Stop
-  - Waypoint management (Load/Upload/Download)
-  - Simulator control
-- **Safety Features**:
-  - Visual status indicators
-  - Confirmation steps for critical operations
+### UI Architecture
+- **`DuvopsView`** — ecrã de controlo principal; instancia e liga os managers
+- **`FlightActivity`** — wrapper fullscreen para `DuvopsView`
+- **`MainContent`** — home screen; SDK registration + botão para abrir FlightActivity
+- **`LoginView`** / **`HealthInformationView`** — views de produção, não usadas no fluxo benchmark
 
-## Utility Components
+---
 
-### Critical SDK Utilities
-- **Module Verification** (`ModuleVerificationUtil.java`):
-  - Ensures safe access to DJI components with model-specific checks:
-    - `isMavic2Product()` (checks Mavic 2 Pro/Zoom compatibility)
-    - `getFlightController()` (used by `FlightManager`)
-    - Model-specific handling for M2EA Enterprise operations
-  - **Critical Safety Check**: All flight operations must verify controller availability
+## Pending for Benchmark (implementar antes de testar)
 
-- **UI Feedback** (`ToastUtils.java`):
-  - Thread-safe message handling via `Handler`
-  - Key methods:
-    - `setResultToToast()` - Error display (used in connection failures)
-    - `setResultToText()` - Status updates (e.g., connection status)
-  - **Safety Requirement**: All critical errors must use this for user notification
+| Item | Onde | Prioridade |
+|---|---|---|
+| Campos `seq` + `t_send_ms` na telemetria | `TelemetryManager.collectAndSend()` | **Alta** — sem eles não há métricas de packet loss |
+| Reconnect automático | `OneM2MSession.onConnectionStatusChange(false)` | **Alta** — benchmark não pode parar por WiFi glitch |
+| Timeout na registration sequence | `OneM2MSession.pendingCallbacks` | **Média** — sessão fica suspensa se CSE não responder |
+| Protocol selector UI | `DuvopsView` (spinner/dropdown) | **Média** — actualmente hardcoded WebSocket |
+| `MqttProtocolClient` | `network/MqttProtocolClient.java` | Depois CSE e WebSocket validados |
+| `HttpProtocolClient` | `network/HttpProtocolClient.java` | Depois MQTT |
+| `CoApProtocolClient` | `network/CoApProtocolClient.java` | Depois HTTP (lib californium) |
+| Validar campo `nu` na subscrição | `OneM2MSession.createSubscription()` | Ao testar no device com CSE real |
 
-- **Video Management** (`VideoFeedView.java`):
-  - Handles primary video feed rendering with:
-    - Automatic cover view when feed stops (>500ms timeout)
-    - Mavic 2-specific video stream handling
-    - Key frame reset via `changeSourceResetKeyFrame()`
-  - **Hardware Note**: Video feed requires physical device testing (simulator limitations)
+---
 
 ## Critical Development Notes
 
 ### Hardware Requirements
-- **Physical device testing mandatory** for:
-  - Camera controls (zoom/mode transitions)
-  - Flight logic and safety features
-  - Telemetry validation
-- SDK simulation has significant limitations
+- **Testes físicos obrigatórios** para: câmara, zoom, voo, telemetria
+- SDK simulator: só para UI/layout — câmara e telemetria não funcionam
 
 ### Safety Constraints
-- All flight commands require safety validation (e.g., `isFlying()` check)
-- Implement retry logic for critical operations
-- Validate all telemetry values for NaN/invalid states
-- Mission execution must include failsafe waypoints
-- **Connection Handling**:
-  - Monitor WebSocket states (`onOpen`/`onFailure` in `SocketListener`)
-  - Handle network errors via `onConnectionStatusChange`
-- **UI Safety**: Critical actions require confirmation in mission interface
+- Todos os comandos de voo validados em `FlightManager.checkController()`
+- `Double.isNaN()` em todos os valores de telemetria antes de usar
+- Virtual sticks timeout: modo desactivado automaticamente no `onStopMission()`
+
+### OneM2M Integration Notes
+- AE registration usa `rr=true` (reachable resource) — necessário para notificações WS
+- Containers criados com `mni=10` (telemetry) e `mni=5` (commands)
+- Conflito (rsc 4105) é tratado como sucesso — permite reconnect sem limpeza do CSE
+- Notificações chegam como `m2m:rqp` com `op=5` — ACK obrigatório (enviado em `sendNotifyAck()`)
+- `OneM2MSession.sendTelemetry()` é fire-and-forget — respostas de CIN ignoradas
+
+---
 
 ## System Architecture
 
-- **Event Bus**: Otto (`App.java`) for inter-component communication
-- **MultiDex**: Enabled for broader device support (minSdkVersion 23+)
-- **Flight Logic**: Thread-safe mission management with synchronized states
-- **Navigation**: PID controllers for smooth GPS waypoint transitions
-- **Camera Management**: Dedicated `CameraManager` class handling stream sources
-- **Network Layer**: `NetworkManager` implements full command/response cycle with error handling
+- **Event Bus**: Otto (`App.java`) para comunicação `MainActivity → MainContent`
+- **MultiDex**: Enabled (`minSdkVersion 23+`, DJI SDK é grande)
+- **Navigation**: PID controllers + virtual sticks (5Hz, Haversine distance)
+- **Camera**: `CameraManager` via KeySDK (`CameraKey.HYBRID_ZOOM_FOCAL_LENGTH`, etc.)
+- **Threading**: Timer (250ms telemetria), Thread separada para missões e GPS moves
 
 ---
 
 ## Project Conventions
 
-### Nomenclatura (snake_case / camelCase)
+### Nomenclatura
 
 | Contexto | Convenção | Exemplo |
-|----------|-----------|---------|
-| Java method names | camelCase | `setVirtualStickModeEnabled` |
-| Java field names | camelCase | `primaryVideoFeedView` |
-| Java constant names | SCREAMING_SNAKE_CASE | `MAX_FLIGHT_SPEED` |
-| Java class names | PascalCase | `DuvopsView` |
+|---|---|---|
+| Java methods | camelCase | `setVirtualStickModeEnabled` |
+| Java fields | camelCase | `protocolClient` |
+| Java constants | SCREAMING_SNAKE_CASE | `DEFAULT_CSE_WS_PORT` |
+| Java classes | PascalCase | `OneM2MSession` |
 | Layout XML IDs | snake_case | `pb_mission` |
-| Layout XML filenames | snake_case | `view_mission.xml` |
-| WebSocket command names | camelCase | `setZoom`, `startMission` |
-| JSON telemetry fields | camelCase | `batLvl`, `cameraMode` |
-| Log tag prefix | `DJI/DEBUG` | `Log.d("DEBUG", ...)` |
+| OneM2M commands | camelCase | `setZoom`, `startMission` |
+| Telemetry JSON fields | camelCase | `batLvl`, `cameraMode` |
 
-### Code Style Rules
-
-- Todos os ficheiros Java têm cabeçalho com propósito descrito
-- Cada método tem docblock: `/**` com `@param`, `@return`, `@throws` (quando aplicável)
-- Comentários inline apenas para **porquê** (não **o quê**)
-- Erros críticos exibidos via `ToastUtils.setResultToToast()` (sempre)
-- Telemetria validada para NaN antes de uso: `Double.isNaN(value)`
+### Code Style
+- Cabeçalho em cada ficheiro Java com propósito descrito
+- Docblock em cada método: `@param`, `@return`, `@throws`
+- Comentários inline apenas para **porquê**, não **o quê**
+- Erros críticos via `ToastUtils.setResultToToast()` sempre
+- Telemetria validada para NaN: `Double.isNaN(value)` antes de usar
 
 ---
 
 ## Managers Reference
 
-### DroneCommandListener (interface)
+### ProtocolClient (interface)
 | Método | Descrição |
-|--------|------|
-| `onConnectionStatusChange(boolean, String)` | WebSocket connection status |
-| `onTakeOff()` | Start takeoff |
-| `onLand()` | Start landing |
-| `onMotors(boolean)` | Turn motors on/off |
-| `onGoHome()` | Return to home |
-| `onMoveTo(double, double)` | GPS navigation to lat/lng |
-| `onVirtualStickInput(float, float, float, float)` | Roll, pitch, yaw, throttle |
-| `onVirtualStickState(boolean)` | Enable/disable virtual sticks |
-| `onPerform360()` | 360° yaw rotation |
-| `onIdentify(boolean)` | Toggle LEDs/beacons |
-| `onStartMission(...)` | Start waypoint mission |
-| `onStopMission()` | Stop mission |
-| `onPauseMission()` | Pause/resume mission |
-| `onStartRTMP()` | Start RTMP stream |
-| `onSetZoom(float)` | Set zoom factor |
-| `onSetCameraMode(String)` | Set camera mode (RGB/IR/SPLIT) |
-| `onGimbalAngle(float, float, String)` | Set gimbal pitch/yaw (absolute/relative) |
-| `onGimbalReset()` | Reset gimbal to neutral |
+|---|---|
+| `connect(host, port, aeId)` | Liga ao CSE; port=8180 (WS), 1883 (MQTT), 8080 (HTTP), 5683 (CoAP) |
+| `disconnect()` | Desliga e liberta recursos |
+| `sendTelemetry(json)` | Envia payload (OneM2MSession envolve em m2m:cin) |
+| `isConnected()` | true se sessão OneM2M pronta |
+| `setCommandLogListener(l)` | Listener de debug para comandos recebidos |
 
-### NetworkManager
-| Método | Descrição |
-|--------|------|
-| `connect(String url, String serialNumber)` | Open WebSocket connection |
-| `disconnect()` | Close WebSocket |
-| `sendStatus(String jsonStatus)` | Send telemetry JSON |
-| `handleRawMessage(String text)` | Parse incoming JSON → command dispatch |
-| `notifyConnectionChange(boolean, String)` | Notify listener of connection state |
-| `setCommandLogListener(CommandLogListener)` | Set debug callback for received commands |
-| `CommandLogListener.onCommandReceived(String, String)` | Callback: command name + raw JSON |
+### OneM2MSession (implements ProtocolClient, DroneCommandListener)
+| Método / Campo | Descrição |
+|---|---|
+| `OneM2MSession(DroneCommandListener)` | Constructor — passa FlightManager |
+| `setTransport(NetworkManager)` | Regista raw message listener no transport |
+| `connect(host, port, aeId)` | Computa originator, delega ao transport |
+| `sendTelemetry(json)` | Envolve em m2m:cin, envia via transport |
+| `onConnectionStatusChange(true, ...)` | Dispara sequência de registo AE |
+| `onRawMessage(json)` | Processa m2m:rsp (respostas) e m2m:rqp op=5 (notificações) |
+| `CSE_BASE = "/id-in"` | Path base do CSE (hardcoded, ver acme.ini cseID) |
+| `AE_NAME = "uxv"` | Nome do recurso AE |
 
-### FlightManager
+### NetworkManager (implements ProtocolClient)
 | Método | Descrição |
-|--------|------|
+|---|---|
+| `connect(host, port, aeId)` | Constrói `ws://host:port`, abre WebSocket |
+| `disconnect()` | Fecha WebSocket (code 1000) |
+| `sendTelemetry(json)` | `ws.send(json)` — envia string raw |
+| `handleRawMessage(text)` | Se rawMessageListener definido → delega; senão → processCommand() |
+| `setRawMessageListener(l)` | Usado por OneM2MSession para interceptar mensagens |
+| `notifyConnectionChange(b, msg)` | Chama DroneCommandListener.onConnectionStatusChange() |
+
+### FlightManager (implements DroneCommandListener)
+| Método | Descrição |
+|---|---|
 | `onTakeOff()` | `flightController.startTakeoff()` |
 | `onLand()` | `flightController.startLanding()` |
-| `onMotors(boolean)` | `flightController.turnOnMotors()` / `turnOffMotors()` |
+| `onMotors(boolean)` | `turnOnMotors()` / `turnOffMotors()` |
 | `onGoHome()` | `flightController.startGoHome()` |
-| `onIdentify(boolean)` | Set LED/beacon settings |
-| `onVirtualStickState(boolean)` | Enable/disable virtual stick mode |
-| `onVirtualStickInput(float, float, float, float)` | Update roll/pitch/yaw/throttle values |
-| `onMoveTo(double, double)` | GPS navigation via PID + virtual sticks |
-| `onPerform360()` | Yaw 360° rotation |
-| `onStartMission(String, String, int, float, String)` | Waypoint mission loop |
-| `onStopMission()` | Stop mission, reset states |
-| `onPauseMission()` | Pause/resume mission |
-| `onSetZoom(float)` | Delegates to CameraManager |
-| `onSetCameraMode(String)` | Delegates to CameraManager |
-| `onGimbalAngle(float, float, String)` | `gimbal.rotate(Rotation, callback)` |
-| `onGimbalReset()` | `gimbal.reset(callback)` |
+| `onVirtualStickState(boolean)` | Enable/disable virtual sticks + advanced mode |
+| `onVirtualStickInput(r, p, y, t)` | Actualiza roll/pitch/yaw/throttle (scale: 10×/20×/4×) |
+| `onMoveTo(lat, lng)` | PID navigation thread (Haversine, stop at 2 m) |
+| `onPerform360()` | Yaw 30°/s durante ~12 s |
+| `onStartMission(...)` | Thread de missão waypoint (RUNNING/PAUSED/STOPPED) |
+| `onSetZoom(float)` | Delega ao CameraManager |
+| `onSetCameraMode(String)` | Delega ao CameraManager |
+| `onGimbalAngle(pitch, yaw, mode)` | `gimbal.rotate()`, clamp pitch[-90,30] yaw[-75,75] |
+| `onGimbalReset()` | `gimbal.reset()` |
 
 ### CameraManager
 | Método | Descrição |
-|--------|------|
+|---|---|
 | `setZoom(float factor)` | `focalLength = factor × 240`, via KeyManager |
-| `setCameraMode(String mode)` | Switch camera stream: RGB/WIDE, IR/INFRARED_THERMAL, SPLIT/PIP |
+| `setCameraMode(String mode)` | Troca stream: RGB/WIDE, IR/INFRARED_THERMAL, SPLIT/PIP |
 
 ### TelemetryManager
 | Método | Descrição |
-|--------|------|
-| `startTelemetry()` | Start 250ms telemetry timer |
-| `stopTelemetry()` | Stop telemetry timer |
-| `setFlightController(FlightController)` | Update FC reference |
-| `setTraveling(boolean)` | Update isTraveling flag |
-| `setModelName(String)` | Update drone model name |
+|---|---|
+| `startTelemetry()` | Inicia timer 250 ms |
+| `stopTelemetry()` | Para timer |
+| `setFlightController(fc)` | Actualiza referência do FC |
+| `setTraveling(boolean)` | Actualiza flag isTraveling |
+| `setModelName(String)` | Nome do modelo no JSON de telemetria |
 
 ---
 
 ## Architecture Decision Log (ADRs)
 
-### ADR-001: WebSocket vs MQTT para comunicação drone-server
-- **Decisão:** Usar WebSocket (okhttp3) em vez de MQTT
-- **Contexto:** Necessidade de comunicação bidirecional em tempo real com JSON payloads
-- **Racional:**
-  - WebSocket permite JSON nativo sem serialização adicional
-  - okHttp já é dependência do projeto (via DJI SDK)
-  - Simples de implementar e testar
-- **Consequências:**
-  - Sem reconnection automática nativa (implementado manualmente)
-  - Sem QoS guarantees (aceitável para telemetria)
-  - Mensagens de 200ms com retry logic implementada
+### ADR-001: WebSocket como protocolo inicial
+- **Decisão:** WebSocket (okhttp3) como primeiro transporte a implementar
+- **Racional:** Bidirecional, persistente, suportado pelo ACME CSE, okhttp3 já é dep do DJI SDK
+- **Consequências:** Sem reconnect automático nativo — implementar manualmente
 
 ### ADR-002: Otto Event Bus vs LiveData/Compose
-- **Decisão:** Continuar com Otto (square/otto) em vez de LiveData/ViewDataBinding
-- **Contexto:** Projeto baseado em Views com comunicação inter-componente
-- **Racional:**
-  - Otto é leve e simples (single `EventBus.java` em `App.java`)
-  - Código existente já usa Otto extensivamente
-  - migração para Compose/LiveData seria breaking change
+- **Decisão:** Manter Otto para comunicação inter-componente
+- **Racional:** Código existente usa Otto extensivamente; migração seria breaking change
+- **Consequências:** Thread-safety manual necessária; sem lifecycle awareness
+
+### ADR-003: Zoom conversion factor = ×240
+- **Decisão:** `zoomFactor × 240 = focalLength_mm`
+- **Racional:** M2EA usa focal length em mm; 24 mm = 1.0×, confirmado experimentalmente
+
+### ADR-004: Virtual Sticks + PID vs WaypointMissionOperator
+- **Decisão:** Virtual Sticks + PID (5 Hz) para navegação GPS
+- **Racional:** Waypoint V2 é upload-only, sem feedback real-time; PID permite correcção contínua
+- **Consequências:** Cálculo manual de distância/direcção (Haversine), mais complexidade mas mais controlo
+
+### ADR-005: Hybrid Zoom via `setOpticalZoomFocalLength`
+- **Decisão:** Focal length em vez de digital zoom
+- **Racional:** M2EA tem 8× óptico + 4× digital; focal length controla a parte óptica sem perda de qualidade
+
+### ADR-006: Camera stream mapping por mode
+- **Decisão:** `RGB → WIDE`, `IR → INFRARED_THERMAL`, `SPLIT → PIP`
+- **Racional:** M2EA tem duas câmaras; selecção via VideoStreamSource
+
+### ADR-007: DuvopsView (activo) vs DboidsView (referência)
+- **Decisão:** DuvopsView é o alvo de desenvolvimento; DboidsView é read-only
+- **Racional:** DboidsView é monolítico (~1200 linhas); DuvopsView separa concerns em managers
+
+### ADR-008: Testes físicos obrigatórios para câmara/voo
+- **Decisão:** Nunca confiar no simulator para câmara ou telemetria real
+- **Racional:** SDK simulator tem limitações significativas; video feed não funciona
+
+### ADR-009: ProtocolClient abstraction para multi-protocolo
+- **Decisão:** Interface `ProtocolClient` isola o transporte da lógica de voo/telemetria
+- **Racional:** Benchmark requer 4 protocolos (WS, MQTT, HTTP, CoAP); sem abstracção seria
+  necessário manter 4 versões separadas do app
 - **Consequências:**
-  - Thread-safety manual necessária (`EventBus().post()` em background thread)
-  - Sem lifecycle awareness (cuidado com memory leaks)
+  - `OneM2MSession` é um decorator sobre `ProtocolClient` que adiciona semântica OneM2M
+  - `NetworkManager` implementa `ProtocolClient` para WebSocket
+  - Future: `MqttProtocolClient`, `HttpProtocolClient`, `CoApProtocolClient`
+  - `DuvopsView` usa tipo abstracto `ProtocolClient` — mudança de protocolo sem alterar UI
 
-### ADR-003: Zoom conversion factor = x240
-- **Decisão:** Fator de conversão `zoomFactor × 240 = focalLength_mm`
-- **Contexto:** DJI SDK usa focal length em mm para zoom óptico
-- **Racional:**
-  - 24mm (wide) = 1.0x base
-  - Fator linear confirmado experimentalmente
-  - `setOpticalZoomFocalLength(factor × 240, callback)`
+### ADR-010: OneM2M session na app (AE completo vs proxy simples)
+- **Decisão:** A app é um AE oneM2M completo — regista-se, cria containers, subscreve
+- **Racional:** Para o benchmark ser válido, o protocolo oneM2M deve ser usado correctamente
+  end-to-end; um proxy simples não mediria o overhead real do middleware
 - **Consequências:**
-  - Range: 1.0x (24mm) a 32.0x (7680mm — digital overlay)
-
-### ADR-004: Virtual Sticks vs Waypoint V2 para navegação
-- **Decisão:** Usar Virtual Sticks + PID control em vez de WaypointMissionOperator
-- **Contexto:** Necessidade de controle fino de waypoints com adaptação em tempo real
-- **Racional:**
-  - Waypoint V2 é upload-based (sem feedback em tempo real durante execução)
-  - Virtual Sticks permite PID loop a 5Hz com correção contínua
-  - Mais flexível para missions dinâmicos
-- **Consequências:**
-  - Requires manual distance/direction calculation (Haversine)
-  - Precisa de `setVirtualStickAdvancedModeEnabled(true)` para Attitude mode
-  - Mais complexidade mas mais controle
-
-### ADR-005: Hybrid Zoom (optical + digital)
-- **Decisão:** Usar `setOpticalZoomFocalLength` em vez de `setDigitalZoomFactor`
-- **Contexto:** M2EA tem zoom híbrido (8x optical + 4x digital = 32x total)
-- **Racional:**
-  - `focalLength` controla optical zoom
-  - Digital zoom é overlay pós-processamento (perda de qualidade)
-  - Factor max focal = 7680mm (32x)
-
-### ADR-006: Camera stream selection by mode
-- **Decisão:** Mapear cameraMode → stream para video feed
-- **Racional:** M2EA tem múltiplas câmaras (RGB + FLIR thermal)
-- **Mapeamento:**
-  | cameraMode | stream |
-  |------------|--------|
-  | RGB | WIDE (RGB primary) |
-  | IR | INFRARED_THERMAL |
-  | SPLIT | PIP (WIDE + INFRARED_THERMAL) |
-
-### ADR-007: DuvopsView vs DboidsView
-- **Decisão:** DuvopsView (novo) é alvo de correção de bugs; DboidsView (legado) é referência apenas
-- **Contexto:** DboidsView era código monolítico funcional mas difícil de manter
-- **Racional:**
-  - Separar concerns: NetworkManager, FlightManager, CameraManager, TelemetryManager
-  - DuvopsView é apenas UI — logic em managers dedicados
-  - DboidsView tem toda a lógica inline (anti-pattern mas funcional)
-
-### ADR-008: Physical device testing mandatory
-- **Decisão:** Nunca confiar em simulator para features de camera/flight
-- **Contexto:** SDK simulator tem limitações significativas
-- **Racional:**
-  - Video feed não funciona no simulator
-  - Camera commands falham silenciosamente
-  - Telemetry é simulated (não reflete real hardware behavior)
-- **Consequências:**
-  - Todas as PRs com changes em camera/flight requerem device testing
-  - Simulator apenas para UI/layout debugging
+  - `OneM2MSession` gere a sequência de registo (5 passos assíncronos)
+  - Conflito (rsc 4105) é tratado como sucesso para permitir reconnect sem limpar o CSE
+  - Telemetria é fire-and-forget (sem aguardar ACK) para não bloquear o timer de 250 ms
 
 ---
 
 ## Known Issues & Workarounds
 
 | Issue | Workaround |
-|-------|-------|
-| Video feed dies after 500ms in simulator | Test only on physical device |
-| Virtual sticks drift on long missions | PID tuning every 200ms (not faster) |
-| Zoom not available in IR mode | Check camera stream before zoom command |
-| WebSocket disconnects on RC sleep | Implement reconnection in SocketListener |
-| Thermal camera needs mode switch | Camera mode must be set before zoom |
-| Gimbal pitch out of range on some missions | Clamp pitch to -90..30 before sending |
+|---|---|
+| Video feed morre após 500 ms no simulator | Testar apenas no device físico |
+| Virtual sticks derivam em missões longas | PID tuning a cada 200 ms (não mais rápido) |
+| Zoom indisponível em modo IR | Verificar stream antes do comando zoom |
+| WebSocket desliga quando RC entra em sleep | Implementar reconnect automático em OneM2MSession |
+| Câmara térmica requer mudança de modo | Definir cameraMode antes do zoom |
+| Gimbal pitch fora de range em algumas missões | Clamp pitch para [-90,30] antes de enviar |
+| `nu` na subscrição pode não funcionar | Se notificações não chegarem, trocar `/id-in/uxv` por `aeOriginator` |
+| Sessão suspensa se CSE não responder | Implementar timeout nos pendingCallbacks de OneM2MSession |
+| Sem reconnect automático | DuvopsView.connectToCse() tem de ser chamado manualmente |
+
+---
+
+## Source Code Structure
+
+```
+app/src/main/java/com/dji/sdk/duvops/
+├── app/
+│   ├── App.java                  # EventBus singleton + product accessors
+│   ├── MainActivity.java         # Launcher; USB accessory handler
+│   ├── MainContent.java          # Home screen; DJI SDK registration + permissões
+│   ├── LoginView.java            # DJI login (produção, não usada no benchmark)
+│   └── HealthInformationView.java # HMS diagnostics (produção, não usada)
+├── flight/
+│   ├── DuvopsView.java           # ⭐ UI principal; instancia OneM2MSession + NetworkManager
+│   ├── FlightActivity.java       # Wrapper fullscreen para DuvopsView
+│   ├── FlightManager.java        # ⭐ Executa comandos de voo; impl DroneCommandListener
+│   ├── CameraManager.java        # Zoom e modo de câmara via KeyManager
+│   ├── TelemetryManager.java     # ⭐ Timer 250 ms; recolhe e envia telemetria
+│   └── PIDController.java        # PID para navegação GPS
+└── network/
+    ├── ProtocolClient.java        # ⭐ Interface de transporte (WS/MQTT/HTTP/CoAP)
+    ├── OneM2MSession.java         # ⭐ Sessão OneM2M: AE reg + CIN + SUB + dispatch
+    ├── NetworkManager.java        # ⭐ Transporte WebSocket (okhttp3); impl ProtocolClient
+    ├── SocketListener.java        # Callbacks do WebSocket → NetworkManager
+    └── DroneCommandListener.java  # Interface de comandos de voo (18 métodos)
+```
+> ⭐ Ficheiros principais — ler antes de qualquer alteração
+
+---
+
+## How to Add a New Protocol Client
+
+Para adicionar MQTT (exemplo):
+
+1. Adicionar dependência em `app/build.gradle`:
+   ```groovy
+   implementation 'org.eclipse.paho:org.eclipse.paho.client.mqttv3:1.2.5'
+   ```
+
+2. Criar `network/MqttProtocolClient.java` que implementa `ProtocolClient`:
+   ```java
+   public class MqttProtocolClient implements ProtocolClient {
+       @Override public void connect(String host, int port, String aeId) { ... }
+       @Override public void sendTelemetry(String json) { ... }
+       // ...
+   }
+   ```
+
+3. Em `DuvopsView`, substituir a construção do transport:
+   ```java
+   // Antes (WebSocket):
+   NetworkManager transport = new NetworkManager(session);
+   // Depois (MQTT):
+   MqttProtocolClient transport = new MqttProtocolClient(session);
+   ```
+   `OneM2MSession` não muda — é protocol-agnostic.
+
+4. Adicionar selector de protocolo na UI (spinner ou settings screen).
+
+> `OneM2MSession` tem de implementar `DroneCommandListener` para o transport concreto
+> poder notificar eventos de conexão. Garantir que o novo transport chama
+> `listener.onConnectionStatusChange()` quando a ligação abre/fecha.
 
 ---
 
 ## Documentation References
 
 | Recurso | Local | Propósito |
-|-----|------|------|
+|---|---|---|
 | DJI SDK v4 API Reference | `docs/DJIMobileSDKAndroidAPIReference.md` | Referência completa da API (local) |
-| DJI SDK Online | https://developer.dji.com/api-reference/android-api/ | Referência oficial atualizada |
-| `docs/DboidsView.java` | Código legado (~1200 linhas, READ ONLY) | Referência |
-| `docs/mavic2_gimbal.txt` | Exemplos de rotação do gimbal (pitch/yaw) | Referência |
-| `docs/telemetry-reference.md` | Todos os campos de telemetria enviados (20+ campos) | Novo |
-| `docs/command-reference.md` | Todos os comandos suportados explicados | Novo |
-
----
-
-## Source Code Structure & File Reference
-
-```
-app/src/main/java/com/dji/sdk/duvops/
-├── app/                    # Entry point & lifecycle
-│   ├── App.java            # EventBus singleton + product accessors
-│   ├── MainActivity.java  # Launcher activity, USB accessory handler
-│   ├── MainContent.java   # Home screen UI, SDK registration, permission flow
-│   ├── LoginView.java     # DJI account login/logout custom view
-│   └── HealthInformationView.java  # HMS diagnostics display
-├── flight/                 # Flight & drone logic
-│   ├── DuvopsView.java     # Core flight control UI (target for bug fixes)
-│   ├── FlightActivity.java # Full-screen host for DuvopsView
-│   ├── FlightManager.java  # takeoff, land, mission, virtual sticks
-│   ├── CameraManager.java  # camera mode, zoom via KeyManager
-│   ├── TelemetryManager.java  # telemetry polling/sending
-│   └── PIDController.java
-├── network/                # WebSocket layer
-│   ├── NetworkManager.java  # WebSocket connect/disconnect/status + command dispatch
-│   ├── SocketListener.java  # WebSocket event callbacks
-│   └── DroneCommandListener.java  # Command interface (16 methods)
-└── utils/                  # Shared utilities (DJI SDK sample code heritage)
-    ├── ModuleVerificationUtil.java  # DJI component safety checks
-    ├── ToastUtils.java        # Thread-safe toast messages
-    ├── VideoFeedView.java     # H.264 decode + display
-    ├── CallbackHandlers.java  # Common callback helpers
-    ├── DialogUtils.java       # Dialog display utilities
-    ├── DownloadHandler.java   # File download management
-    ├── GeneralUtils.java      # General-purpose helpers
-    ├── Helper.java            # HMS info + legacy helpers
-    ├── DensityUtil.java       # DPI/density conversions
-    ├── ViewHelper.java        # View manipulation helpers
-    └── OnCompletionCallback.java  # Completion callback interface
-```
-
-### app/ — Detalhe dos ficheiros
-
-#### App.java
-- `getProductInstance()` → `BaseProduct` (via `DJISDKManager.getProduct()`)
-- `isAircraftConnected()` / `isHandHeldConnected()` — product type check
-- `getInstance()` — Application singleton
-- `getEventBus()` — Otto `Bus` singleton
-- **Relação:** ponto de entrada para o produto DJI; usado por `DuvopsView`, `MainContent`, etc.
-
-#### MainActivity.java
-- `onNewIntent()` — detecta USB accessory attach → triggers DJI SDK connection
-- `onConnectivityChange(ConnectivityChangeEvent)` — EventBus subscriber
-- **Relação:** Activity principal; lança `MainContent` via `FlightActivity`
-
-#### MainContent.java
-- `startSDKRegistration()` — registers app with DJI SDK (standard or LDM mode)
-- `refreshSDKRelativeUI()` — updates UI based on product connection state
-- `initUI()` — binds UI widgets, sets click listeners, requests permissions
-- `notifyStatusChange()` — posts `ConnectivityChangeEvent` via EventBus
-- **Relação:** home screen; lança `FlightActivity` → `DuvopsView`
-
-#### LoginView.java
-- `onClick(View)` — login/logout via `UserAccountManager`
-- `updateLoginState(UserAccountState)` — updates button states
-- **Estado:** custom view reutilizável; não usado no fluxo principal do projecto
-
-#### HealthInformationView.java
-- `onUpdate(List<DJIDiagnostics>)` — receives diagnostics updates, separates HMS
-- `onAttachedToWindow()` / `onDetachedFromWindow()` — register/unregister diagnostics callback
-- **Estado:** custom view para display de diagnósticos DJI; não usado no fluxo principal
-
-#### FlightActivity.java
-- `onCreate()` — sets `KEEP_SCREEN_ON`, instantiates `DuvopsView` as content view
-- **Relação:** activity wrapper para `DuvopsView`; lançada por `MainContent`
-
-### utils/ — Nota de proveniência
-
-Ficheiros em `app/src/main/java/com/dji/sdk/duvops/utils/` são **herdados do sample code da DJI SDK**.
-- **`ModuleVerificationUtil.java`** — verificação de segurança de componentes DJI (migrated to project)
-- **`VideoFeedView.java`** — decode H.264 + display (adaptado para M2EA)
-- **`ToastUtils.java`** — thread-safe toast messages
-- **`CallbackHandlers.java`** — common callback wrappers
-- **`DialogUtils.java`** — dialog display utilities
-- **`DownloadHandler.java`** — file download management
-- **`GeneralUtils.java`** — general-purpose helpers
-- **`Helper.java`** — HMS info resolution + legacy helpers
-- **`DensityUtil.java`** — DPI/density conversions
-- **`ViewHelper.java`** — view manipulation helpers
-- **`OnCompletionCallback.java`** — completion callback interface
-
-> **Nota:** utils/ não é código do projecto mas biblioteca de utilitários DJI.
-> Modificações devem ser cuidadosas — pode afectar múltiplos ficheiros.
-
-## Legacy Reference
-
-| Ficheiro | Descrição | Estado |
-|------|- -----|-- ----|
-| `docs/DboidsView.java` | Código legacy monolítico (~1200 linhas) — referência de implementação funcional | READ ONLY |
-| `docs/mavic2_gimbal.txt` | Exemplos de controlo do gimbal (pitch/yaw) | Referência |
+| `docs/DboidsView.java` | Código legado (~1200 linhas, READ ONLY) | Referência de implementação |
+| `docs/mavic2_gimbal.txt` | Exemplos de rotação do gimbal | Referência |
+| `docs/telemetry-reference.md` | Todos os campos de telemetria | Referência |
+| `docs/command-reference.md` | Todos os comandos suportados | Referência |
+| ACME CSE WebSocket | `docs/ai-context/cse-dev.md` | Configuração do CSE e protocolo |
