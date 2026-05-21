@@ -27,7 +27,7 @@ package com.dji.sdk.duvops.flight;
 import android.util.Log;
 import androidx.annotation.NonNull;
 
-import com.dji.sdk.duvops.network.NetworkManager;
+import com.dji.sdk.duvops.network.ProtocolClient;
 
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -72,8 +72,8 @@ public class TelemetryManager {
     /** Tag para log. */
     private static final String TAG = "TelemetryManager";
 
-    /** Gestor de rede para envio de telemetria via WebSocket. */
-    private final NetworkManager networkManager;
+    /** Cliente de protocolo para envio de telemetria ao CSE. */
+    private final ProtocolClient protocolClient;
 
     /** Controlador de voo do drone. */
     private FlightController flightController;
@@ -174,11 +174,11 @@ public class TelemetryManager {
     /**
      * Cria um novo gestor de telemetria.
      *
-     * @param networkManager o gestor de rede para envio de dados
+     * @param protocolClient cliente de protocolo para envio de dados ao CSE
      * @param flightController o controlador de voo do drone
      */
-    public TelemetryManager(NetworkManager networkManager, FlightController flightController) {
-        this.networkManager = networkManager;
+    public TelemetryManager(ProtocolClient protocolClient, FlightController flightController) {
+        this.protocolClient = protocolClient;
         this.flightController = flightController;
         initKeys();
         setupListeners();
@@ -514,7 +514,7 @@ public class TelemetryManager {
             status.put("zoom", cameraZoom);
             status.put("cameraMode", cameraMode);
 
-            networkManager.sendStatus(status.toString());
+            protocolClient.sendTelemetry(status.toString());
 
         } catch (JSONException e) {
             Log.e(TAG, "Erro ao criar JSON: " + e.getMessage());

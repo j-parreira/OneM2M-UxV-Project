@@ -1,18 +1,21 @@
 /**
- * {@code NetworkManager} — Gestor de comunicação WebSocket com o servidor.
+ * {@code NetworkManager} — Transporte WebSocket para comunicação com o ACME CSE.
  *
- * Liga o servidor WebSocket, envia telemetria e processa comandos
- * recebidos delegando ao {@link DroneCommandListener}.
+ * Implementa {@link ProtocolClient} sobre WebSocket (okhttp3). Liga ao CSE,
+ * envia frames JSON e entrega mensagens recebidas ao {@link DroneCommandListener}
+ * ou, quando em modo OneM2M, ao {@code RawMessageListener} definido
+ * por {@link com.dji.sdk.duvops.network.OneM2MSession} via {@link #setRawMessageListener}.
  *
  * <h3>Protocolo de conexão</h3>
  * <ul>
- *   <li>URL: {@code ws://<server>} (auto-prefixed com {@code ws://} se faltar)</li>
- *   <li>Cabeçalho: {@code dboidsID} = serial number do drone</li>
- *   <li>Telemetria: JSON a cada 250ms</li>
+ *   <li>URL construído como {@code ws://<host>:<port>}</li>
+ *   <li>Cabeçalho: {@code dboidsID} = aeId do drone</li>
+ *   <li>Modo raw: chama directamente {@link DroneCommandListener} com o comando parseado</li>
+ *   <li>Modo OneM2M: entrega todas as mensagens ao rawMessageListener sem processar</li>
  * </ul>
  *
  * @author João Parreira
- * @version 3.0
+ * @version 4.0
  */
 package com.dji.sdk.duvops.network;
 
@@ -27,20 +30,21 @@ import okhttp3.Request;
 import okhttp3.WebSocket;
 
 /**
- * Gestor de camada de rede — WebSocket para comunicação drone-server.
+ * Transporte WebSocket (okhttp3) que implementa {@link ProtocolClient}.
  *
  * <h3>Ciclo de vida</h3>
  * <pre>
- * NetworkManager(listener)
- *     → connect(url, serialNumber) → cria WebSocket + SocketListener
- *     → onOpen → notifyConnectionChange(true)
- *     → onMessage(text) → handleRawMessage(text) → processCommand() → listener
- *     → sendStatus(json) → envia telemetria
- *     → sendResponse(json) → envia resposta do getter ao frontend
+ * NetworkManager(droneCommandListener)
+ *     → connect(host, port, aeId) → cria WebSocket + SocketListener
+ *     → onOpen → notifyConnectionChange(true) → listener.onConnectionStatusChange()
+ *     → onMessage(text) → handleRawMessage(text)
+ *         ├─ rawMessageListener != null → rawMessageListener.onRawMessage() [modo OneM2M]
+ *         └─ rawMessageListener == null → processCommand() → listener [modo raw]
+ *     → sendTelemetry(json) → ws.send()
  *     → disconnect() → fecha WebSocket
  * </pre>
  */
-public class NetworkManager {
+public class NetworkManager implements ProtocolClient {
 
     /** Tag para log. */
     private static final String TAG = "RemoteCommandManager";
@@ -54,29 +58,53 @@ public class NetworkManager {
     /** URL do servidor WebSocket. */
     private String serverUrl;
 
-    /** Listener para log de comandos recebidos (debug). */
-    private CommandLogListener commandLogListener;
+    /** Indica se o WebSocket está actualmente ligado. */
+    private boolean connected = false;
+
+    /** Listener de debug para comandos recebidos. */
+    private ProtocolClient.CommandLogListener commandLogListener;
 
     /**
-     * Interface para notificar o último comando recebido (debug).
+     * Listener de mensagens raw — quando definido (por OneM2MSession), todas as
+     * mensagens são entregues aqui e o dispatch normal de comandos é ignorado.
      */
-    public interface CommandLogListener {
-        /**
-         * Chamado quando um comando é recebido do servidor.
-         *
-         * @param command nome do comando
-         * @param rawJSON o JSON bruto recebido
-         */
-        void onCommandReceived(String command, String rawJSON);
+    private RawMessageListener rawMessageListener;
+
+    /** Callback para entrega de mensagens raw ao protocolo OneM2M. */
+    public interface RawMessageListener {
+        void onRawMessage(String json);
     }
 
     /**
-     * Define o listener para log de comandos.
+     * Define o listener de mensagens raw (usado por {@link OneM2MSession}).
      *
-     * @param listener o listener que recebe as notificações de comandos
+     * <p>Quando definido, {@link #handleRawMessage} entrega a mensagem aqui
+     * em vez de processar comandos directamente.
+     *
+     * @param listener listener a chamar para cada mensagem recebida
      */
-    public void setCommandLogListener(CommandLogListener listener) {
+    public void setRawMessageListener(RawMessageListener listener) {
+        this.rawMessageListener = listener;
+    }
+
+    /**
+     * Define o listener de debug para comandos recebidos.
+     *
+     * @param listener listener a notificar (pode ser {@code null})
+     */
+    @Override
+    public void setCommandLogListener(ProtocolClient.CommandLogListener listener) {
         this.commandLogListener = listener;
+    }
+
+    /**
+     * Indica se o WebSocket está actualmente ligado.
+     *
+     * @return {@code true} se a ligação está estabelecida
+     */
+    @Override
+    public boolean isConnected() {
+        return connected;
     }
 
     /** Serial number do drone (usado como ID). */
@@ -92,35 +120,28 @@ public class NetworkManager {
     }
 
     /**
-     * Liga ao servidor WebSocket.
+     * Liga ao ACME CSE via WebSocket.
      *
      * <p>Fecha qualquer ligação anterior antes de abrir uma nova.
-     * Se o URL não tiver prefixo {@code ws://} ou {@code wss://},
-     * adiciona automaticamente o prefixo {@code ws://}.
+     * Constrói o URL como {@code ws://host:port}.
      *
-     * @param url o URL do servidor (ex: "uvws.jparreira.dev")
-     * @param serialNumber o serial number do drone
+     * @param host hostname ou IP do CSE (sem prefixo de protocolo)
+     * @param port porto WebSocket do CSE (normalmente 8180)
+     * @param aeId identificador do AE (serial number do drone)
      */
-    public void connect(String url, String serialNumber) {
-        // Fechar a ligação anterior se existir
+    @Override
+    public void connect(String host, int port, String aeId) {
         disconnect();
 
-        this.serverUrl = url;
-        this.droneId = serialNumber;
+        this.serverUrl = "ws://" + host + ":" + port;
+        this.droneId = aeId;
 
-        // Notificar a UI que estamos a tentar ligar
-        notifyConnectionChange(false, "Connecting to " + url + "...");
+        notifyConnectionChange(false, "Connecting to " + serverUrl + "...");
 
         OkHttpClient client = new OkHttpClient();
-
-        // Garante que o URL tem o prefixo correto
-        String fullUrl = url.startsWith("ws://") || url.startsWith("wss://")
-                ? url
-                : "ws://" + url;
-
         Request request = new Request.Builder()
-                .url(fullUrl)
-                .addHeader("dboidsID", serialNumber)
+                .url(serverUrl)
+                .addHeader("dboidsID", aeId)
                 .build();
 
         SocketListener socketListener = new SocketListener(this);
@@ -130,7 +151,9 @@ public class NetworkManager {
     /**
      * Fecha a ligação WebSocket se estiver aberta.
      */
+    @Override
     public void disconnect() {
+        connected = false;
         if (ws != null) {
             ws.close(1000, "App closing");
             ws = null;
@@ -138,24 +161,36 @@ public class NetworkManager {
     }
 
     /**
-     * Envia a telemetria ao servidor.
+     * Envia um payload JSON ao CSE via WebSocket.
      *
-     * @param jsonStatus o JSON com os dados de telemetria
+     * <p>Em modo raw, envia telemetria directamente. Em modo OneM2M,
+     * {@link OneM2MSession} envolve o payload num frame {@code m2m:rqp}
+     * antes de chamar este método.
+     *
+     * @param jsonPayload payload JSON serializado a enviar
      */
-    public void sendStatus(String jsonStatus) {
+    @Override
+    public void sendTelemetry(String jsonPayload) {
         if (ws != null) {
-            ws.send(jsonStatus);
+            ws.send(jsonPayload);
         }
     }
 
     /**
-     * Processa uma mensagem recebida do servidor.
+     * Processa uma mensagem recebida do CSE.
      *
-     * <p>Extrai o campo "command" do JSON e delega ao {@link #processCommand(String, JSONObject)}.
+     * <p>Se {@link #rawMessageListener} estiver definido (modo OneM2M), entrega a
+     * mensagem sem processar — {@link OneM2MSession} trata do protocolo OneM2M.
+     * Caso contrário, extrai o campo {@code "command"} e delega ao
+     * {@link #processCommand(String, JSONObject)} (modo raw legado).
      *
      * @param text a mensagem JSON recebida
      */
     public void handleRawMessage(String text) {
+        if (rawMessageListener != null) {
+            rawMessageListener.onRawMessage(text);
+            return;
+        }
         try {
             JSONObject obj = new JSONObject(text);
             if (obj.has("command")) {
@@ -170,12 +205,12 @@ public class NetworkManager {
      * Notifica o listener da mudança de estado de conexão.
      *
      * @param connected {@code true} se a conexão é bem-sucedida
-     * @param msg mensagem a exibir na UI
+     * @param msg       mensagem a exibir na UI (usada apenas em caso de falha)
      */
     public void notifyConnectionChange(boolean connected, String msg) {
+        this.connected = connected;
         if (listener != null) {
             if (connected) {
-                // Incluir o URL na mensagem de sucesso
                 listener.onConnectionStatusChange(true, "Connected to: " + this.serverUrl);
             } else {
                 listener.onConnectionStatusChange(false, msg);

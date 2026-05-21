@@ -25,7 +25,8 @@ import androidx.annotation.NonNull;
 import com.dji.sdk.duvops.R;
 import com.dji.sdk.duvops.app.App;
 import com.dji.sdk.duvops.network.NetworkManager;
-import com.dji.sdk.duvops.network.DroneCommandListener;
+import com.dji.sdk.duvops.network.OneM2MSession;
+import com.dji.sdk.duvops.network.ProtocolClient;
 import com.dji.sdk.duvops.utils.ModuleVerificationUtil;
 import com.dji.sdk.duvops.utils.ToastUtils;
 import com.dji.sdk.duvops.utils.VideoFeedView;
@@ -63,12 +64,15 @@ public class DuvopsView extends LinearLayout implements View.OnClickListener {
     /** Tag para log. */
     private static final String TAG = "DuvopsView";
 
-    /** Chave para SharedPreferences do servidor WebSocket. */
+    /** Chave para SharedPreferences do CSE. */
     private static final String PREFS_NAME = "duvops_prefs";
     private static final String KEY_SERVER_URL = "server_url";
 
-    /** URL do servidor WebSocket por defeito. */
-    private static final String DEFAULT_SERVER_URL = "www.ciic.pt";
+    /** Host do ACME CSE por defeito (IP na LAN local). */
+    private static final String DEFAULT_CSE_HOST = "192.168.1.100";
+
+    /** Porto WebSocket do ACME CSE. */
+    private static final int DEFAULT_CSE_WS_PORT = 8180;
 
     /** SharedPreferences para persistir a configuração entre sessões. */
     private SharedPreferences prefs;
@@ -106,8 +110,8 @@ public class DuvopsView extends LinearLayout implements View.OnClickListener {
 
     //region Managers
 
-    /** Gestor de comunicação via WebSocket com o servidor. */
-    private NetworkManager networkManager;
+    /** Cliente de protocolo — OneM2MSession sobre WebSocket. */
+    private ProtocolClient protocolClient;
 
     /** Gestor de telemetria — captura e envia dados ao servidor. */
     private TelemetryManager telemetryManager;
@@ -144,7 +148,7 @@ public class DuvopsView extends LinearLayout implements View.OnClickListener {
                     int color = isError ? android.R.color.holo_red_light : android.R.color.holo_green_light;
                     statusField.setTextColor(getResources().getColor(color));
 
-                    // Iniciar telemetria quando ligar ao servidor
+                    // Iniciar telemetria quando sessão OneM2M estiver pronta
                     if (status.startsWith("Connected") && !isError) {
                         if (telemetryManager != null) telemetryManager.startTelemetry();
                     }
@@ -152,24 +156,28 @@ public class DuvopsView extends LinearLayout implements View.OnClickListener {
             }
         });
 
-        // 2. Ligar Rede ao Flight Manager (NetworkManager envia comandos → FlightManager)
-        networkManager = new NetworkManager(flightManager);
+        // 2. Construir stack de comunicação: OneM2MSession sobre WebSocket
+        // session: intercepta eventos de conexão para fazer AE registration e despacha comandos
+        // transport: camada WebSocket raw (okhttp3)
+        OneM2MSession session = new OneM2MSession(flightManager);
+        NetworkManager transport = new NetworkManager(session);
+        session.setTransport(transport);
+        protocolClient = session;
 
-        // 2a. Ligar listener de log de comandos para debug no messageField
-        networkManager.setCommandLogListener(new NetworkManager.CommandLogListener() {
+        // 2a. Listener de debug para comandos recebidos (exibidos no messageField)
+        protocolClient.setCommandLogListener(new ProtocolClient.CommandLogListener() {
             @Override
-            public void onCommandReceived(String command, String rawJSON) {
+            public void onCommandReceived(String command, String rawJson) {
                 post(() -> {
-                    // Exibir apenas o nome do comando + params resumidos
                     messageField.setText("CMD: " + command);
                     messageField.setTextColor(getResources().getColor(android.R.color.holo_blue_light));
-                    Log.d(TAG, "Received command: " + command + " " + rawJSON);
+                    Log.d(TAG, "Received command: " + command + " " + rawJson);
                 });
             }
         });
 
         // 3. Ligar Telemetria ao Flight Controller
-        telemetryManager = new TelemetryManager(networkManager, flightManager.getFlightController());
+        telemetryManager = new TelemetryManager(protocolClient, flightManager.getFlightController());
 
         // 4. Inicializar Camera Manager
         cameraManager = new CameraManager();
@@ -210,10 +218,10 @@ public class DuvopsView extends LinearLayout implements View.OnClickListener {
         statusField = findViewById(R.id.statusField);
         hostname = findViewById(R.id.websocketUrl);
 
-        // Carregar URL do servidor das preferências ou usar o valor por defeito
+        // Carregar host do CSE das preferências ou usar o valor por defeito
         String savedUrl = prefs.getString(KEY_SERVER_URL, null);
         if (savedUrl == null || savedUrl.isEmpty()) {
-            savedUrl = DEFAULT_SERVER_URL;
+            savedUrl = DEFAULT_CSE_HOST;
         }
         hostname.setText(savedUrl);
 
@@ -259,7 +267,7 @@ public class DuvopsView extends LinearLayout implements View.OnClickListener {
                     flightManager.initGimbal();
 
                     Log.d("DEBUG", "serialNumber: " + s);
-                    connectWS();
+                    connectToCse();
                 }
                 @Override
                 public void onFailure(DJIError djiError) {
@@ -269,16 +277,31 @@ public class DuvopsView extends LinearLayout implements View.OnClickListener {
         }
     }
 
-    /** Liga ao servidor WebSocket com o IP e serial number atuais. */
-    private void connectWS() {
-        String serverUrl = hostname.getText().toString();
-        if (serverUrl.isEmpty()) {
-            serverUrl = DEFAULT_SERVER_URL;
-            hostname.setText(DEFAULT_SERVER_URL);
+    /**
+     * Liga ao ACME CSE usando o host configurado no campo {@code hostname}.
+     *
+     * <p>Aceita entradas no formato {@code "192.168.1.100"} ou {@code "192.168.1.100:8180"}.
+     * Prefixos de protocolo (ws://, http://) são removidos automaticamente.
+     */
+    private void connectToCse() {
+        String input = hostname.getText().toString().trim();
+        if (input.isEmpty()) {
+            input = DEFAULT_CSE_HOST;
+            hostname.setText(DEFAULT_CSE_HOST);
         }
-        // Guardar a URL nas preferências para persistência entre sessões
-        prefs.edit().putString(KEY_SERVER_URL, serverUrl).apply();
-        networkManager.connect(serverUrl, serialNumber);
+        // Remover prefixo de protocolo se o utilizador o tiver escrito
+        String host = input.replaceAll("^(ws|wss|http|https)://", "");
+        // Separar port do host, se presente (ex: "192.168.1.100:8180")
+        int port = DEFAULT_CSE_WS_PORT;
+        int colonIdx = host.lastIndexOf(':');
+        if (colonIdx > 0) {
+            try {
+                port = Integer.parseInt(host.substring(colonIdx + 1));
+                host = host.substring(0, colonIdx);
+            } catch (NumberFormatException ignored) {}
+        }
+        prefs.edit().putString(KEY_SERVER_URL, host).apply();
+        protocolClient.connect(host, port, serialNumber);
     }
 
     /**
@@ -290,7 +313,7 @@ public class DuvopsView extends LinearLayout implements View.OnClickListener {
     public void onClick(View v) {
         switch (v.getId()) {
             case R.id.connectws:
-                connectWS();
+                connectToCse();
                 break;
 
             case R.id.startSimulator:
