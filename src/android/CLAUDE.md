@@ -68,15 +68,26 @@ boolean isConnected();
 void setCommandLogListener(CommandLogListener listener);
 ```
 
-**Sequência de inicialização OneM2M** (automática após WebSocket abrir):
+**Sequência de inicialização OneM2M** (automática após WebSocket abrir, 6 passos):
 ```
 connect(host, 8180, serialNumber)
-  → WebSocket abre → registerAE()   [POST /id-in, ty=2]
-  → resp 2001/4105 → createTelemetryContainer()  [POST /id-in/uxv, ty=3, rn=telemetry]
-  → resp 2001/4105 → createCommandsContainer()   [POST /id-in/uxv, ty=3, rn=commands]
-  → resp 2001/4105 → createSubscription()        [POST /id-in/uxv/commands, ty=23]
+  → WebSocket abre → registerAE()              [POST /id-in, ty=2]
+  → resp 2001/4105 → createTelemetryContainer  [POST /id-in/uxv, ty=3, rn=telemetry]
+  → resp 2001/4105 → createCommandsContainer   [POST /id-in/uxv, ty=3, rn=commands]
+  → resp 2001/4105 → createSubscription        [POST /id-in/uxv/commands, ty=23]
+  → resp 2001/4105 → createAckContainer        [POST /id-in/uxv, ty=3, rn=ack]
   → resp 2001/4105 → onSessionReady()
   → commandListener.onConnectionStatusChange(true, ...) → startTelemetry()
+```
+
+**Árvore de recursos após ligação:**
+```
+/id-in
+└── uxv                  ← AE
+    ├── telemetry        ← CNT (mni=10) — CINs de telemetria
+    ├── commands         ← CNT (mni=5)  — CINs de comandos
+    │   └── sub-commands ← SUB — notificação ao AE
+    └── ack              ← CNT (mni=200) — ACKs de comandos (Cenário 2)
 ```
 
 **CSE host**: configurado no campo `hostname` da `DuvopsView`.
@@ -167,9 +178,12 @@ connect(host, 8180, serialNumber)
 | Item | Onde | Prioridade |
 |---|---|---|
 | ~~Campos `seq` + `t_send_ms` na telemetria~~ | ✅ Implementado | — |
-| Reconnect automático | `OneM2MSession.onConnectionStatusChange(false)` | **Alta** — benchmark não pode parar por WiFi glitch |
-| Timeout na registration sequence | `OneM2MSession.pendingCallbacks` | **Média** — sessão fica suspensa se CSE não responder |
-| Protocol selector UI | `DuvopsView` (spinner/dropdown) | **Média** — actualmente hardcoded WebSocket |
+| ~~Reconnect automático com backoff~~ | ✅ Implementado (1s→30s) | — |
+| ~~Timeout na registration sequence~~ | ✅ Implementado (10s/request) | — |
+| ~~Command ACK (`/id-in/uxv/ack`)~~ | ✅ Implementado | — |
+| ~~Configurable telemetry rate (`setTelemetryRate`)~~ | ✅ Implementado | — |
+| ~~Estado do drone na UI~~ | ✅ Implementado (droneStateField) | — |
+| Protocol selector UI | `DuvopsView` (spinner/dropdown) | **Média** — actualmente hardcoded WebSocket/8180 |
 | `MqttProtocolClient` | `network/MqttProtocolClient.java` | Depois CSE e WebSocket validados |
 | `HttpProtocolClient` | `network/HttpProtocolClient.java` | Depois MQTT |
 | `CoApProtocolClient` | `network/CoApProtocolClient.java` | Depois HTTP (lib californium) |
@@ -246,11 +260,14 @@ connect(host, 8180, serialNumber)
 |---|---|
 | `OneM2MSession(DroneCommandListener)` | Constructor — passa FlightManager |
 | `setTransport(NetworkManager)` | Regista raw message listener no transport |
-| `connect(host, port, aeId)` | Computa originator, delega ao transport |
-| `sendTelemetry(json)` | Envolve em m2m:cin, envia via transport |
-| `onConnectionStatusChange(true, ...)` | Dispara sequência de registo AE |
-| `onRawMessage(json)` | Processa m2m:rsp (respostas) e m2m:rqp op=5 (notificações) |
-| `CSE_BASE = "/id-in"` | Path base do CSE (hardcoded, ver acme.ini cseID) |
+| `setSessionListener(SessionListener)` | Callback de estados intermédios → statusField |
+| `setTelemetryRateListener(l)` | Callback para `setTelemetryRate` → TelemetryManager |
+| `connect(host, port, aeId)` | Computa originator, inicia sequência de 6 passos |
+| `sendTelemetry(json)` | Envolve em m2m:cin, envia para `/id-in/uxv/telemetry` |
+| `dispatchCommand(json)` | Parseia comando, despacha, envia ACK a `/id-in/uxv/ack` |
+| `sendCommandAck(...)` | CIN com `{command, seq_cmd, t_cmd_ms, t_recv_ms, t_exec_ms}` |
+| `shutdown()` | Cancela reconnect, para scheduler, desliga transport |
+| `CSE_BASE = "/id-in"` | Path base do CSE (deve corresponder ao cseID em acme.ini) |
 | `AE_NAME = "uxv"` | Nome do recurso AE |
 
 ### NetworkManager (implements ProtocolClient)
@@ -289,8 +306,10 @@ connect(host, 8180, serialNumber)
 ### TelemetryManager
 | Método | Descrição |
 |---|---|
-| `startTelemetry()` | Inicia timer 250 ms |
+| `startTelemetry()` | Inicia timer com `intervalMs` (default 250 ms) |
 | `stopTelemetry()` | Para timer |
+| `setRate(int intervalMs)` | Altera taxa; reinicia timer se activo (Cenário 1) |
+| `setTickListener(l)` | Callback `onSlowTick(seq, bat, isFlying, sats)` a cada ~1 s |
 | `setFlightController(fc)` | Actualiza referência do FC |
 | `setTraveling(boolean)` | Actualiza flag isTraveling |
 | `setModelName(String)` | Nome do modelo no JSON de telemetria |
@@ -378,9 +397,7 @@ app/src/main/java/com/dji/sdk/duvops/
 ├── app/
 │   ├── App.java                  # EventBus singleton + product accessors
 │   ├── MainActivity.java         # Launcher; USB accessory handler
-│   ├── MainContent.java          # Home screen; DJI SDK registration + permissões
-│   ├── LoginView.java            # DJI login (produção, não usada no benchmark)
-│   └── HealthInformationView.java # HMS diagnostics (produção, não usada)
+│   └── MainContent.java          # Home screen; DJI SDK registration + permissões
 ├── flight/
 │   ├── DuvopsView.java           # ⭐ UI principal; instancia OneM2MSession + NetworkManager
 │   ├── FlightActivity.java       # Wrapper fullscreen para DuvopsView

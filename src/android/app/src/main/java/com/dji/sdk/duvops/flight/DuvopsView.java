@@ -6,7 +6,7 @@
  * <ul>
  *   <li>Feed de vídeo do drone (H.264 fullscreen)</li>
  *   <li>Barra superior: CSE host, botão Connect/Disconnect, Simulator, Abort</li>
- *   <li>Painel inferior: estado da sessão OneM2M + contador de telemetria</li>
+ *   <li>Painel inferior: estado da sessão OneM2M, contador de telemetria, estado do drone</li>
  * </ul>
  *
  * <h3>Fluxo de inicialização</h3>
@@ -15,11 +15,17 @@
  *   → initUI()
  *   → FlightManager + OneM2MSession + NetworkManager
  *   → getSerialNumber() → connectToCse() → OneM2MSession.connect()
- *     → [AE reg → containers → subscription] → startTelemetry()
+ *     → [AE reg → containers → subscription → ack container] → startTelemetry()
  * </pre>
  *
+ * <h3>Comandos de controlo de benchmark recebidos via OneM2M</h3>
+ * <ul>
+ *   <li>{@code setTelemetryRate} — altera o intervalo do timer de telemetria</li>
+ *   <li>Todos os outros comandos de voo passam pelo {@link FlightManager}</li>
+ * </ul>
+ *
  * @author João Parreira
- * @version 3.0
+ * @version 4.0
  */
 package com.dji.sdk.duvops.flight;
 
@@ -41,7 +47,6 @@ import com.dji.sdk.duvops.app.App;
 import com.dji.sdk.duvops.network.NetworkManager;
 import com.dji.sdk.duvops.network.OneM2MSession;
 import com.dji.sdk.duvops.network.ProtocolClient;
-import com.dji.sdk.duvops.utils.ModuleVerificationUtil;
 import com.dji.sdk.duvops.utils.ToastUtils;
 import com.dji.sdk.duvops.utils.VideoFeedView;
 
@@ -58,14 +63,9 @@ public class DuvopsView extends LinearLayout implements View.OnClickListener {
 
     private static final String TAG = "DuvopsView";
 
-    /** SharedPreferences — persiste o CSE host entre sessões. */
-    private static final String PREFS_NAME    = "duvops_prefs";
-    private static final String KEY_SERVER_URL = "server_url";
-
-    /** Host do ACME CSE por defeito (IP do dev machine na LAN). */
+    private static final String PREFS_NAME     = "duvops_prefs";
+    private static final String KEY_SERVER_URL  = "server_url";
     private static final String DEFAULT_CSE_HOST    = "192.168.1.100";
-
-    /** Porto WebSocket do ACME CSE (ver acme.ini → [websocket] port). */
     private static final int    DEFAULT_CSE_WS_PORT = 8180;
 
     private SharedPreferences prefs;
@@ -75,20 +75,33 @@ public class DuvopsView extends LinearLayout implements View.OnClickListener {
     /** Campo de texto para o host do CSE (ex: "192.168.1.100" ou "192.168.1.100:8180"). */
     private EditText hostname;
 
-    /** Botão de ligação/desligação ao CSE (toggle: "Connect CSE" ↔ "Disconnect"). */
+    /** Toggle: "Connect CSE" quando desligado, "Disconnect" quando sessão activa. */
     private Button connectws;
 
-    /** Botão para iniciar o simulador DJI com coordenadas de Leiria. */
+    /** Inicia o simulador DJI com coordenadas fixas (IPL Leiria). */
     private Button startSimulator;
 
-    /** Botão de abort de emergência (System.exit). */
+    /** Abort de emergência — chama cleanup() antes de System.exit(). */
     private Button abort;
 
-    /** Linha de estado da sessão OneM2M (Registering / Ready / Disconnected). */
+    /**
+     * Estado da sessão OneM2M.
+     * Branco durante inicialização (SessionListener), verde quando pronto,
+     * vermelho em erro (FlightManager.UiUpdateListener).
+     */
     private TextView statusField;
 
-    /** Contador de telemetria ("TX: seq=N") e último comando recebido ("CMD: X"). */
+    /**
+     * Contador de telemetria ("TX: seq=N") actualizado a cada ~1 s pelo TelemetryTickListener.
+     * Sobrescrito momentaneamente por "CMD: X" quando um comando chega.
+     */
     private TextView messageField;
+
+    /**
+     * Estado do drone: bateria, voo, satélites.
+     * Actualizado em simultâneo com messageField pelo TelemetryTickListener.
+     */
+    private TextView droneStateField;
 
     /** Feed de vídeo H.264 do drone. */
     private VideoFeedView primaryVideoFeedView;
@@ -96,18 +109,19 @@ public class DuvopsView extends LinearLayout implements View.OnClickListener {
     // ── Managers ─────────────────────────────────────────────────────────────
 
     /**
-     * Sessão OneM2M — referência tipada para acesso a {@link OneM2MSession#setSessionListener}
-     * e {@link OneM2MSession#shutdown()}. É também o {@code protocolClient}.
+     * Referência tipada à sessão OneM2M para acesso a
+     * {@link OneM2MSession#setSessionListener}, {@link OneM2MSession#setTelemetryRateListener}
+     * e {@link OneM2MSession#shutdown()}.
      */
     private OneM2MSession session;
 
-    /** Interface genérica de protocolo — usada por TelemetryManager. */
+    /** Interface genérica — usada por TelemetryManager. */
     private ProtocolClient protocolClient;
 
-    /** Polling de telemetria (250 ms). */
+    /** Timer de telemetria (250 ms por defeito, configurável via setTelemetryRate). */
     private TelemetryManager telemetryManager;
 
-    /** Execução de comandos de voo no drone. */
+    /** Executor de comandos de voo. */
     private FlightManager flightManager;
 
     /** Controlo de câmara (zoom + modo). */
@@ -115,15 +129,15 @@ public class DuvopsView extends LinearLayout implements View.OnClickListener {
 
     // ── Estado ───────────────────────────────────────────────────────────────
 
-    /** Serial number do drone (obtido assincronamente pelo DJI SDK). */
+    /** Serial number do drone (obtido assincronamente). */
     public String serialNumber = "-1";
 
-    /** Modelo do drone (ex: "Mavic 2 Enterprise Advanced"). */
+    /** Modelo do drone. */
     public String model = "";
 
     /**
-     * {@code true} quando a sessão OneM2M está registada e o botão deve
-     * mostrar "Disconnect". Actualizado pelo FlightManager.UiUpdateListener.
+     * {@code true} quando a sessão OneM2M está registada e o timer de telemetria está activo.
+     * Controla o comportamento do botão Connect/Disconnect.
      */
     private boolean sessionReady = false;
 
@@ -143,25 +157,23 @@ public class DuvopsView extends LinearLayout implements View.OnClickListener {
             @Override
             public void onStatusUpdate(String status, boolean isError) {
                 post(() -> {
+                    // Actualizar sempre o texto e a cor
+                    statusField.setText(status);
                     if (isError) {
-                        // Desligado ou erro — vermelho, botão volta a "Connect CSE"
                         statusField.setTextColor(getResources().getColor(android.R.color.holo_red_light));
                         sessionReady = false;
                         connectws.setText("Connect CSE");
                     } else if (status.startsWith("Connected")) {
-                        // Sessão OneM2M pronta — verde, botão muda para "Disconnect"
                         statusField.setTextColor(getResources().getColor(android.R.color.holo_green_light));
                         sessionReady = true;
                         connectws.setText("Disconnect");
                         if (telemetryManager != null) telemetryManager.startTelemetry();
                     }
-                    // Nota: status intermediários (Registering, Creating...) chegam via
-                    // SessionListener com cor branca — não alteram o estado do botão.
                 });
             }
         });
 
-        // 2. Construir stack: OneM2MSession sobre WebSocket (NetworkManager)
+        // 2. Stack: OneM2MSession → NetworkManager (WebSocket)
         session   = new OneM2MSession(flightManager);
         NetworkManager transport = new NetworkManager(session);
         session.setTransport(transport);
@@ -170,49 +182,51 @@ public class DuvopsView extends LinearLayout implements View.OnClickListener {
         // 2a. SessionListener — actualiza statusField com estados intermédios (branco)
         session.setSessionListener(msg -> post(() -> {
             statusField.setText(msg);
-            // Usar branco para estados intermédios; verde/vermelho ficam para os estados finais
-            if (statusField.getCurrentTextColor() != getResources().getColor(android.R.color.holo_green_light)
-                    && statusField.getCurrentTextColor() != getResources().getColor(android.R.color.holo_red_light)) {
-                statusField.setTextColor(getResources().getColor(android.R.color.white));
-            }
-            // Sobrepor sempre com a mensagem actual
-            statusField.setText(msg);
             statusField.setTextColor(getResources().getColor(android.R.color.white));
         }));
 
-        // 2b. CommandLogListener — mostra último comando recebido no messageField (azul)
+        // 2b. TelemetryRateListener — recebe setTelemetryRate commands e repassa ao timer
+        session.setTelemetryRateListener(intervalMs -> {
+            if (telemetryManager != null) telemetryManager.setRate(intervalMs);
+            post(() -> {
+                int rate = Math.max(1, 1000 / intervalMs);
+                statusField.setText("Telemetry rate: " + rate + " msg/s (" + intervalMs + " ms)");
+                statusField.setTextColor(getResources().getColor(android.R.color.white));
+            });
+        });
+
+        // 2c. CommandLogListener — "CMD: X" no messageField (azul)
         protocolClient.setCommandLogListener((command, rawJson) -> post(() -> {
             messageField.setText("CMD: " + command);
             messageField.setTextColor(getResources().getColor(android.R.color.holo_blue_light));
             Log.d(TAG, "Command received: " + command + " " + rawJson);
         }));
 
-        // 3. TelemetryManager — envia telemetria via protocolClient
+        // 3. TelemetryManager
         telemetryManager = new TelemetryManager(protocolClient, flightManager.getFlightController());
 
-        // 3a. TickListener — mostra contador TX no messageField a cada 1 s (branco)
-        telemetryManager.setTickListener(seq -> post(() -> {
-            // Só actualizar se não houver uma mensagem de comando recente
-            // (o azul indica que um CMD chegou; voltamos a branco após o tick)
+        // 3a. TelemetryTickListener — actualiza TX counter e estado do drone a cada ~1 s
+        telemetryManager.setTickListener((seq, bat, isFlying, sats) -> post(() -> {
+            // Repor cor branca (o CMD pode ter posto azul)
             messageField.setText("TX: seq=" + seq);
             messageField.setTextColor(getResources().getColor(android.R.color.white));
+            // Estado do drone: bateria, voo, satélites
+            String batStr  = bat >= 0 ? bat + "%" : "?%";
+            String flyStr  = isFlying ? "Flying" : "Ground";
+            String satStr  = sats + " sats";
+            droneStateField.setText("Bat: " + batStr + " | " + flyStr + " | " + satStr);
         }));
 
         // 4. CameraManager
         cameraManager = new CameraManager();
         flightManager.setCameraManager(cameraManager);
 
-        // 5. Obter serial number do drone e ligar automaticamente ao CSE
+        // 5. Obter serial number e ligar automaticamente ao CSE
         getSerialNumber();
     }
 
     // ── UI initialization ────────────────────────────────────────────────────
 
-    /**
-     * Infla o layout e liga os elementos da UI.
-     *
-     * @param context contexto da aplicação
-     */
     private void initUI(Context context) {
         setClickable(true);
         setOrientation(HORIZONTAL);
@@ -221,26 +235,21 @@ public class DuvopsView extends LinearLayout implements View.OnClickListener {
 
         prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
 
-        // Botões
-        connectws     = findViewById(R.id.connectws);    connectws.setOnClickListener(this);
+        connectws      = findViewById(R.id.connectws);     connectws.setOnClickListener(this);
         startSimulator = findViewById(R.id.startSimulator); startSimulator.setOnClickListener(this);
-        abort          = findViewById(R.id.abort);       abort.setOnClickListener(this);
+        abort          = findViewById(R.id.abort);          abort.setOnClickListener(this);
 
-        // Campos de texto
-        statusField  = findViewById(R.id.statusField);
-        messageField = findViewById(R.id.messageField);
-        hostname     = findViewById(R.id.websocketUrl);
+        statusField    = findViewById(R.id.statusField);
+        messageField   = findViewById(R.id.messageField);
+        droneStateField = findViewById(R.id.droneStateField);
+        hostname       = findViewById(R.id.websocketUrl);
 
-        // Restaurar host do CSE das preferências
         String saved = prefs.getString(KEY_SERVER_URL, null);
         hostname.setText((saved == null || saved.isEmpty()) ? DEFAULT_CSE_HOST : saved);
 
         initVideoFeed();
     }
 
-    /**
-     * Liga a view ao feed de vídeo principal do drone (H.264).
-     */
     private void initVideoFeed() {
         primaryVideoFeedView = findViewById(R.id.dboids_primary_videofeed);
         if (VideoFeeder.getInstance() != null && VideoFeeder.getInstance().getPrimaryVideoFeed() != null) {
@@ -252,10 +261,10 @@ public class DuvopsView extends LinearLayout implements View.OnClickListener {
 
     /**
      * Liberta todos os recursos: sessão OneM2M, WebSocket e timer de telemetria.
-     *
-     * <p>Chamado por {@link FlightActivity#onDestroy()} para evitar ghost connections.
+     * Chamado por {@link FlightActivity#onDestroy()}.
      */
     public void cleanup() {
+        sessionReady = false;
         if (telemetryManager != null) telemetryManager.stopTelemetry();
         if (session != null) session.shutdown();
     }
@@ -263,10 +272,7 @@ public class DuvopsView extends LinearLayout implements View.OnClickListener {
     // ── Connection ───────────────────────────────────────────────────────────
 
     /**
-     * Obtém o serial number do drone via DJI SDK e liga automaticamente ao CSE.
-     *
-     * <p>Chamado após o produto DJI estar conectado. Se o drone não estiver
-     * disponível, nenhuma ligação é tentada.
+     * Obtém o serial number do drone e liga automaticamente ao CSE.
      */
     public void getSerialNumber() {
         Aircraft aircraft = (Aircraft) App.getProductInstance();
@@ -294,20 +300,23 @@ public class DuvopsView extends LinearLayout implements View.OnClickListener {
     }
 
     /**
-     * Liga ao ACME CSE usando o host configurado no campo {@code hostname}.
+     * Liga ao ACME CSE com o host configurado no campo {@code hostname}.
      *
-     * <p>Aceita: {@code "192.168.1.100"} ou {@code "192.168.1.100:8180"}.
-     * Remove prefixos de protocolo se o utilizador os incluir (ws://, http://).
+     * <p>Reset do estado de sessão antes de iniciar nova ligação — evita
+     * botão inconsistente durante transições.
+     * Aceita: {@code "192.168.1.100"} ou {@code "192.168.1.100:8180"}.
      */
     private void connectToCse() {
+        // Reset do estado anterior para evitar botão inconsistente
+        sessionReady = false;
+        connectws.setText("Connect CSE");
+
         String input = hostname.getText().toString().trim();
         if (input.isEmpty()) {
             input = DEFAULT_CSE_HOST;
             hostname.setText(DEFAULT_CSE_HOST);
         }
-        // Remover prefixo de protocolo
         String host = input.replaceAll("^(ws|wss|http|https)://", "");
-        // Separar port do host, se presente
         int port = DEFAULT_CSE_WS_PORT;
         int colonIdx = host.lastIndexOf(':');
         if (colonIdx > 0) {
@@ -322,18 +331,13 @@ public class DuvopsView extends LinearLayout implements View.OnClickListener {
 
     // ── Click handling ───────────────────────────────────────────────────────
 
-    /**
-     * Processa cliques nos botões da UI.
-     *
-     * @param v vista clicada
-     */
     @Override
     public void onClick(View v) {
         switch (v.getId()) {
 
             case R.id.connectws:
-                // Toggle: se sessão activa → desligar; caso contrário → ligar
                 if (sessionReady) {
+                    // Desligar explicitamente — cancela reconnect automático
                     sessionReady = false;
                     connectws.setText("Connect CSE");
                     if (telemetryManager != null) telemetryManager.stopTelemetry();
@@ -346,7 +350,6 @@ public class DuvopsView extends LinearLayout implements View.OnClickListener {
                 break;
 
             case R.id.startSimulator:
-                // Inicia o simulador DJI com coordenadas fixas (IPL Leiria)
                 if (flightManager.getFlightController() != null) {
                     flightManager.getFlightController().getSimulator().start(
                             dji.common.flightcontroller.simulator.InitializationData.createInstance(
@@ -358,7 +361,6 @@ public class DuvopsView extends LinearLayout implements View.OnClickListener {
                 break;
 
             case R.id.abort:
-                // Terminar a app de emergência — limpa recursos antes de sair
                 cleanup();
                 System.exit(0);
                 break;

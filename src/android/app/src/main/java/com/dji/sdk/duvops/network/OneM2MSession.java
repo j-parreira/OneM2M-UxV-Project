@@ -122,6 +122,22 @@ public class OneM2MSession implements ProtocolClient, DroneCommandListener {
     /** Listener de estado (normalmente DuvopsView.statusField). */
     private SessionListener sessionListener;
 
+    /**
+     * Callback para comandos de controlo de benchmark que não são comandos de voo.
+     *
+     * <p>Actualmente usado para {@code setTelemetryRate} — redireccionado para
+     * {@link com.dji.sdk.duvops.flight.TelemetryManager#setRate(int)} via {@code DuvopsView}.
+     */
+    public interface TelemetryRateListener {
+        /**
+         * @param intervalMs novo intervalo de envio de telemetria em ms
+         */
+        void onSetTelemetryRate(int intervalMs);
+    }
+
+    /** Listener de taxa de telemetria (normalmente DuvopsView → TelemetryManager). */
+    private TelemetryRateListener telemetryRateListener;
+
     /** Originator do AE: {@code "C" + serialNumber} (limpo, ≤ 32 chars). */
     private String aeOriginator;
 
@@ -192,6 +208,15 @@ public class OneM2MSession implements ProtocolClient, DroneCommandListener {
     public void setTransport(NetworkManager transport) {
         this.transport = transport;
         transport.setRawMessageListener(this::onRawMessage);
+    }
+
+    /**
+     * Define o listener de taxa de telemetria.
+     *
+     * @param listener listener a chamar quando o comando {@code setTelemetryRate} é recebido
+     */
+    public void setTelemetryRateListener(TelemetryRateListener listener) {
+        this.telemetryRateListener = listener;
     }
 
     /**
@@ -407,7 +432,18 @@ public class OneM2MSession implements ProtocolClient, DroneCommandListener {
      *
      * <p>Formato: {@code {"command": "takeoff", ...}} (igual ao modo raw legacy).
      */
+    /**
+     * Parseia e despacha um JSON de comando.
+     *
+     * <p>Regista {@code t_recv_ms} antes do switch e envia um ACK CIN a
+     * {@code /id-in/uxv/ack} após dispatch para medição de latência (Cenário 2).
+     * O Streamlit deve incluir {@code t_cmd_ms} e {@code seq_cmd} no CIN de comando.
+     *
+     * @param commandJson JSON do campo {@code con} do CIN recebido
+     */
     private void dispatchCommand(String commandJson) {
+        // Registar timestamp de recepção antes de qualquer processamento
+        final long tRecvMs = System.currentTimeMillis();
         try {
             JSONObject data = new JSONObject(commandJson);
             if (!data.has("command")) return;
@@ -455,10 +491,53 @@ public class OneM2MSession implements ProtocolClient, DroneCommandListener {
                             (float) data.optDouble("yaw",   0),
                             data.optString("mode", "absolute")); break;
                 case "gimbalReset":  commandListener.onGimbalReset(); break;
+                case "setTelemetryRate":
+                    // Comando de controlo de benchmark — não é um comando de voo
+                    int newIntervalMs = data.optInt("intervalMs", 250);
+                    if (telemetryRateListener != null) {
+                        telemetryRateListener.onSetTelemetryRate(newIntervalMs);
+                    }
+                    break;
                 default: Log.d(TAG, "Unknown command: " + command);
             }
+            // Enviar ACK para medição de latência de comandos (Cenário 2).
+            // O Streamlit mede: latência = t_recv_ms - t_cmd_ms.
+            sendCommandAck(command,
+                    data.optInt("seq_cmd", -1),
+                    data.optLong("t_cmd_ms", 0),
+                    tRecvMs);
         } catch (JSONException e) {
             Log.e(TAG, "dispatchCommand: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Envia ACK de comando ao container {@code /id-in/uxv/ack} (fire-and-forget).
+     *
+     * <p>Campos do ACK:
+     * <ul>
+     *   <li>{@code command} — nome do comando executado</li>
+     *   <li>{@code seq_cmd} — sequência do Streamlit (-1 se não fornecido)</li>
+     *   <li>{@code t_cmd_ms} — timestamp de envio pelo Streamlit (0 se não fornecido)</li>
+     *   <li>{@code t_recv_ms} — timestamp de recepção na app (epoch ms)</li>
+     *   <li>{@code t_exec_ms} — timestamp após dispatch (epoch ms)</li>
+     * </ul>
+     */
+    private void sendCommandAck(String command, int seqCmd, long tCmdMs, long tRecvMs) {
+        try {
+            JSONObject ackData = new JSONObject()
+                    .put("command",   command)
+                    .put("seq_cmd",   seqCmd)
+                    .put("t_cmd_ms",  tCmdMs)
+                    .put("t_recv_ms", tRecvMs)
+                    .put("t_exec_ms", System.currentTimeMillis());
+            JSONObject pc = new JSONObject()
+                    .put("m2m:cin", new JSONObject()
+                            .put("cnf", "application/json")
+                            .put("con", ackData.toString()));
+            sendRequest(OP_CREATE, CSE_BASE + "/" + AE_NAME + "/ack", TY_CIN, pc, null);
+        } catch (JSONException e) {
+            Log.e(TAG, "sendCommandAck: " + e.getMessage());
         }
     }
 
@@ -508,6 +587,8 @@ public class OneM2MSession implements ProtocolClient, DroneCommandListener {
     /**
      * Passo 4: subscrição ao container de comandos.
      *
+     * <p>⚠ Se as notificações não chegarem, experimentar {@code nu = [aeOriginator]}.
+     *
      * <p>O CSE entrega notificações via WebSocket quando um novo CIN
      * é criado em {@code /id-in/uxv/commands}.
      *
@@ -527,12 +608,32 @@ public class OneM2MSession implements ProtocolClient, DroneCommandListener {
                             // nct=2: incluir todos os atributos na notificação
                             .put("nct", 2));
             sendRequest(OP_CREATE, CSE_BASE + "/" + AE_NAME + "/commands", TY_SUB, pc,
-                    this::onSessionReady);
+                    this::createAckContainer);  // → passo 5 antes de onSessionReady
         } catch (JSONException e) { Log.e(TAG, "createSubscription: " + e.getMessage()); }
     }
 
     /**
-     * Passo 5 (final): sessão pronta — notifica o {@code FlightManager} que pode
+     * Passo 5: criação do container de ACKs de comandos ({@code /id-in/uxv/ack}).
+     *
+     * <p>Após cada comando recebido, a app envia um CIN aqui com:
+     * {@code {command, seq_cmd, t_cmd_ms, t_recv_ms, t_exec_ms}}.
+     * O Streamlit subscreve este container para medir latência de comandos (Cenário 2).
+     * {@code mni=200} dá buffer suficiente para um burst de 50 comandos com margem.
+     */
+    private void createAckContainer() {
+        notifyStatus("Creating ack container...");
+        try {
+            JSONObject pc = new JSONObject()
+                    .put("m2m:cnt", new JSONObject()
+                            .put("rn",  "ack")
+                            .put("mni", 200));
+            sendRequest(OP_CREATE, CSE_BASE + "/" + AE_NAME, TY_CNT, pc,
+                    this::onSessionReady);
+        } catch (JSONException e) { Log.e(TAG, "createAckContainer: " + e.getMessage()); }
+    }
+
+    /**
+     * Passo 6 (final): sessão pronta — notifica o {@code FlightManager} que pode
      * começar a receber comandos. Dispara {@code telemetryManager.startTelemetry()} em cascata.
      */
     private void onSessionReady() {

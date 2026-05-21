@@ -20,7 +20,6 @@ import android.content.Context;
 import android.widget.TextView;
 import android.widget.Toast;
 
-import com.dji.sdk.duvops.app.HealthInformationView;
 import com.google.gson.Gson;
 import com.google.gson.reflect.TypeToken;
 
@@ -265,49 +264,8 @@ public class Helper {
                 || Camera.DisplayNameZenmuseH20T.equals(displayName);
     }
 
-    /**
-     * Obtém a lista de informações HMS (Health Management System) do ficheiro JSON.
-     *
-     * <p>Cache o resultado em memória para evitar re-leitura.
-     *
-     * @param context o contexto da aplicação
-     * @return a lista de HealthInfo
-     */
-    private static List<HealthInformationView.HealthInfo> hmsJson;
-
-    public static List<HealthInformationView.HealthInfo> getHmsInfo(Context context) {
-        if (hmsJson == null) {
-            synchronized (Helper.class) {
-                if (hmsJson == null) {
-                    hmsJson = getObjFromJsonFile(context, "hms.json",
-                            new TypeToken<List<HealthInformationView.HealthInfo>>() {}.getType());
-                }
-            }
-        }
-        return hmsJson;
-    }
-
-    /**
-     * Obtém o mapeamento de alarmes HMS para SDK Errors.
-     *
-     * <p>Usado para filtrar duplicação entre mensagens HMS e SDK Errors.
-     *
-     * @param context o contexto da aplicação
-     * @return a lista de HealthInfoMatchSDKError
-     */
-    private static List<HealthInformationView.HealthInfoMatchSDKError> hmsMatchSDKError;
-
-    public static List<HealthInformationView.HealthInfoMatchSDKError> getHmsMatchSDKError(Context context) {
-        if (hmsMatchSDKError == null) {
-            synchronized (Helper.class) {
-                if (hmsMatchSDKError == null) {
-                    hmsMatchSDKError = getObjFromJsonFile(context, "hms_match_sdkerror.json",
-                            new TypeToken<List<HealthInformationView.HealthInfoMatchSDKError>>() {}.getType());
-                }
-            }
-        }
-        return hmsMatchSDKError;
-    }
+    // HMS (Health Management System) methods foram removidos juntamente com
+    // HealthInformationView.java — não usados no benchmark M2EA.
 
     /**
      * Lê um ficheiro JSON dos assets e desserializa para o tipo especificado.

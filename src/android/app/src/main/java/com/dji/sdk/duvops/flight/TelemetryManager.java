@@ -188,16 +188,25 @@ public class TelemetryManager {
     private final AtomicInteger seqCounter = new AtomicInteger(0);
 
     /**
-     * Callback de tick lento (1 s) para actualizar a UI com o contador de telemetria.
+     * Intervalo entre mensagens de telemetria em ms.
      *
-     * <p>Chamado a cada 4 ticks (1 s) com o valor actual do {@code seq}.
-     * Definido por {@code DuvopsView} para mostrar "TX: seq=N" no {@code messageField}.
+     * <p>Valores de benchmark: 1000 ms (1 msg/s), 200 ms (5 msg/s), 100 ms (10 msg/s).
+     * Alterado via {@link #setRate(int)} a partir do comando OneM2M {@code setTelemetryRate}.
+     */
+    private int intervalMs = 250;
+
+    /**
+     * Callback de tick lento (≈1 s, a cada 4 ticks do timer principal) para
+     * actualizar a UI com métricas de telemetria e estado do drone.
      */
     public interface TelemetryTickListener {
         /**
-         * @param seq valor actual do contador de sequência
+         * @param seq            valor actual do contador de sequência
+         * @param batteryPercent percentagem de bateria do drone (0-100, -1 se desconhecido)
+         * @param isFlying       {@code true} se o drone está em voo
+         * @param satCount       número de satélites GPS visíveis
          */
-        void onSlowTick(int seq);
+        void onSlowTick(int seq, int batteryPercent, boolean isFlying, int satCount);
     }
 
     /** Listener de tick lento — pode ser {@code null}. */
@@ -206,10 +215,33 @@ public class TelemetryManager {
     /**
      * Define o listener de tick lento.
      *
-     * @param listener listener a notificar a cada 1 s (pode ser {@code null})
+     * @param listener listener a notificar a cada ~1 s (pode ser {@code null})
      */
     public void setTickListener(TelemetryTickListener listener) {
         this.tickListener = listener;
+    }
+
+    /**
+     * Altera a taxa de envio de telemetria durante um run de benchmark.
+     *
+     * <p>Reinicia o timer com o novo intervalo se a telemetria já estiver activa.
+     * Valores típicos de benchmark:
+     * <ul>
+     *   <li>1000 ms → 1 msg/s (Cenário 1, taxa baixa)</li>
+     *   <li>200 ms → 5 msg/s (Cenário 1, taxa média)</li>
+     *   <li>100 ms → 10 msg/s (Cenário 1, taxa alta)</li>
+     * </ul>
+     *
+     * @param newIntervalMs intervalo em ms (mínimo 50 ms = 20 msg/s)
+     */
+    public void setRate(int newIntervalMs) {
+        this.intervalMs = Math.max(50, newIntervalMs);
+        Log.d(TAG, "Telemetry rate changed to " + this.intervalMs + " ms (" +
+                (1000 / this.intervalMs) + " msg/s)");
+        if (isSending) {
+            stopTelemetry();
+            startTelemetry();
+        }
     }
 
     /**
@@ -385,21 +417,25 @@ public class TelemetryManager {
 
         Log.d(TAG, "Starting Telemetry Stream...");
         isSending = true;
+        tickCount = 0;
+        // Calcular quantos ticks constituem ~1 s para o slow tick
+        final int ticksPerSecond = Math.max(1, 1000 / intervalMs);
         timer = new Timer();
         timer.schedule(new TimerTask() {
             @Override
             public void run() {
-                if (tickCount % 4 == 0) {
+                if (tickCount % ticksPerSecond == 0) {
                     updateSlowData();
-                    // Notificar a UI com o seq actual (taxa ≈ 1 s)
                     if (tickListener != null) {
-                        tickListener.onSlowTick(seqCounter.get());
+                        boolean flying = currentFlightState != null && currentFlightState.isFlying();
+                        int sats = currentFlightState != null ? currentFlightState.getSatelliteCount() : 0;
+                        tickListener.onSlowTick(seqCounter.get(), batteryPercent, flying, sats);
                     }
                 }
                 tickCount++;
                 collectAndSend();
             }
-        }, 0, 250);
+        }, 0, intervalMs);
     }
 
     /**

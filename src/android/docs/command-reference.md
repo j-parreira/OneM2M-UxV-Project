@@ -1,6 +1,9 @@
 # Referência de Comandos
 
-> Comandos que o servidor pode enviar para a app via WebSocket.
+> Comandos que o Streamlit pode enviar para a app via OneM2M (CIN no container `commands`).
+> Formato: `{"command": "<nome>", ...}` no campo `con` do `m2m:cin`.
+> Para medição de latência (Cenário 2), incluir também `"t_cmd_ms"` e `"seq_cmd"`:
+> `{"command": "takeoff", "t_cmd_ms": 1748000000000, "seq_cmd": 1}`
 
 ## Formato geral
 
@@ -248,6 +251,24 @@ URL gerada: `rtmp://<server>:1935/<droneSerialNumber>`
 
 ## Especial
 
+### `setTelemetryRate`
+
+Altera o intervalo de envio de telemetria (Cenário 1 — testar diferentes taxas).
+
+| Parâmetro | Tipo | Descrição | Valores típicos |
+|---|---|-|---|
+| `intervalMs` | `int` | Intervalo em ms | 100 (10/s), 200 (5/s), 1000 (1/s) |
+
+```json
+{ "command": "setTelemetryRate", "intervalMs": 200 }
+```
+
+> O mínimo seguro é 50 ms (20 msg/s). Abaixo disso pode saturar o canal.
+> A alteração é efectiva imediatamente — o timer é reiniciado com o novo intervalo.
+> Para repor o valor por defeito: `{"command": "setTelemetryRate", "intervalMs": 250}`
+
+---
+
 ### `perform360`
 
 Executa uma rotação de 360° em yaw para identificação visual (a 30°/s).
@@ -288,6 +309,30 @@ Liga ou desliga LEDs e faróis do drone.
 | `pauseMission` | nenhum | Pausa/retoma missão |
 | `setZoom` | `factor` | Zoom 1.0x-32.0x |
 | `setCameraMode` | `mode` | RGB/IR/SPLIT |
-| `startRTMP` | nenhum | Stream RTMP |
+| `startRTMP` | nenhum | Stream RTMP (produção, sem efeito no benchmark) |
 | `perform360` | nenhum | Rotação 360° |
 | `identify` | `state` (bool) | LEDs on/off |
+| `setTelemetryRate` | `intervalMs` | **Benchmark** — altera taxa de telemetria |
+
+---
+
+## Campos de medição para Cenário 2
+
+Para medir latência de comandos, o Streamlit deve incluir em cada CIN:
+
+| Campo | Tipo | Descrição |
+|---|---|---|
+| `t_cmd_ms` | `long` | Timestamp de envio pelo Streamlit (epoch ms) |
+| `seq_cmd` | `int` | Número de sequência do comando (detectar perda) |
+
+A app responde com um CIN em `/id-in/uxv/ack`:
+
+| Campo | Tipo | Descrição |
+|---|---|---|
+| `command` | `string` | Nome do comando executado |
+| `seq_cmd` | `int` | Número de sequência (do Streamlit) |
+| `t_cmd_ms` | `long` | Timestamp original do Streamlit |
+| `t_recv_ms` | `long` | Timestamp de recepção na app |
+| `t_exec_ms` | `long` | Timestamp após dispatch do comando |
+
+**Latência medida pelo Streamlit:** `t_recv_ms - t_cmd_ms`

@@ -59,19 +59,24 @@ The CSE-Base is configured in `acme.ini`. The Android app (AE) registers itself 
 — no need to pre-create the AE in config. The containers under the AE are created by the
 app after registration.
 
-Expected tree after Android app connects:
+Expected tree after Android app connects (6-step registration sequence):
 
 ```
-/onem2m                        ← CSE-Base (configured in acme.ini)
-└── uxv                        ← AE (registered by Android app)
-    ├── telemetry
-    │   ├── gps
-    │   ├── battery
-    │   └── flight
-    └── commands
+/id-in                         ← CSE-Base (cseID em acme.ini)
+└── uxv                        ← AE (registado pela app no arranque)
+    ├── telemetry              ← CNT (mni=10) — CINs de telemetria a cada intervalMs
+    ├── commands               ← CNT (mni=5)  — CINs de comandos do Streamlit
+    │   └── sub-commands       ← SUB — notificação ao AE quando novo CIN chega
+    └── ack                    ← CNT (mni=200) — CINs de ACK da app (Cenário 2)
 ```
 
-The Streamlit dashboard subscribes to `uxv/telemetry/#` and publishes to `uxv/commands`.
+**Fluxo de telemetria (Cenário 1 — uplink):**
+`App → POST CIN /id-in/uxv/telemetry` → CSE notifica Streamlit via subscrição
+
+**Fluxo de comandos (Cenário 2 — downlink):**
+`Streamlit → POST CIN /id-in/uxv/commands` → CSE notifica App → App executa + ACK → `POST CIN /id-in/uxv/ack` → CSE notifica Streamlit
+
+O Streamlit subscreve `/id-in/uxv/telemetry` e `/id-in/uxv/ack`; publica em `/id-in/uxv/commands`.
 
 ---
 

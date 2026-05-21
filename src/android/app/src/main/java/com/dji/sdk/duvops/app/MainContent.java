@@ -660,14 +660,8 @@ public class MainContent extends RelativeLayout {
             public void onProductConnect(BaseProduct baseProduct) {
                 Log.d(TAG, String.format("onProductConnect newProduct:%s", baseProduct));
                 notifyStatusChange();
-                // Configurar a camera para gravar vídeo após conexão
-                if (baseProduct instanceof Aircraft) {
-                    Camera camera = ((Aircraft) baseProduct).getCamera();
-                    if (camera != null) {
-                        camera.setMode(SettingsDefinitions.CameraMode.RECORD_VIDEO,
-                                error -> ToastUtils.setResultToToast("Camera mode set after connection."));
-                    }
-                }
+                // Nota: não alteramos o modo da câmara automaticamente —
+                // para o benchmark, o modo deve ser controlado via comandos OneM2M.
             }
 
             @Override public void onProductChanged(BaseProduct baseProduct) { notifyStatusChange(); }
@@ -728,14 +722,8 @@ public class MainContent extends RelativeLayout {
             public void onProductConnect(BaseProduct baseProduct) {
                 Log.d(TAG, String.format("onProductConnect newProduct:%s", baseProduct));
                 notifyStatusChange();
-                // Configurar a camera para gravar vídeo após conexão
-                if (baseProduct instanceof Aircraft) {
-                    Camera camera = ((Aircraft) baseProduct).getCamera();
-                    if (camera != null) {
-                        camera.setMode(SettingsDefinitions.CameraMode.RECORD_VIDEO,
-                                error -> ToastUtils.setResultToToast("Camera mode set after connection."));
-                    }
-                }
+                // Nota: não alteramos o modo da câmara automaticamente —
+                // para o benchmark, o modo deve ser controlado via comandos OneM2M.
             }
 
             @Override public void onProductChanged(BaseProduct baseProduct) { notifyStatusChange(); }
