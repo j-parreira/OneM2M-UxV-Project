@@ -6,8 +6,7 @@
  *   <li>Conversões de bytes/strings (GBK, UTF-8, hex)</li>
  *   <li>Criação de listas a partir de arrays primitivos e objetos</li>
  *   <li>Timestamp para string formatada</li>
- *   <li>Verificação de suporte HMS para diferentes modelos DJI</li>
- *   <li>Leitura do ficheiro {@code hms.json} para mapeamento de alarmes</li>
+ *   <li>Verificação de plataforma (multi-stream, M300, H20)</li>
  * </ul>
  *
  * @author João Parreira
@@ -20,13 +19,9 @@ import android.content.Context;
 import android.widget.TextView;
 import android.widget.Toast;
 
-import com.google.gson.Gson;
-import com.google.gson.reflect.TypeToken;
-
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.lang.reflect.Type;
 import java.nio.charset.Charset;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
@@ -264,43 +259,4 @@ public class Helper {
                 || Camera.DisplayNameZenmuseH20T.equals(displayName);
     }
 
-    // HMS (Health Management System) methods foram removidos juntamente com
-    // HealthInformationView.java — não usados no benchmark M2EA.
-
-    /**
-     * Lê um ficheiro JSON dos assets e desserializa para o tipo especificado.
-     *
-     * @param context o contexto
-     * @param file o nome do ficheiro nos assets
-     * @param type o tipo de destino para desserialização
-     * @param <T> o tipo de destino
-     * @return o objeto desserializado ou null em caso de erro
-     */
-    private static <T> T getObjFromJsonFile(Context context, String file, Type type) {
-        InputStream in = null;
-        ByteArrayOutputStream out = null;
-        try {
-            in = context.getAssets().open(file);
-            out = new ByteArrayOutputStream();
-            byte[] buffer = new byte[1024];
-            int length;
-            while ((length = in.read(buffer, 0, 1024)) > -1) {
-                out.write(buffer, 0, length);
-            }
-            out.flush();
-            String json = out.toString();
-            Gson gson = new Gson();
-            return gson.fromJson(json, type);
-        } catch (IOException e) {
-            e.printStackTrace();
-        } finally {
-            if (in != null) {
-                try { in.close(); } catch (IOException e) { e.printStackTrace(); }
-            }
-            if (out != null) {
-                try { out.close(); } catch (IOException e) { e.printStackTrace(); }
-            }
-        }
-        return null;
-    }
 }

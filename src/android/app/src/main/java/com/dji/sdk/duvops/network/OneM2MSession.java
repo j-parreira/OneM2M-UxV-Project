@@ -27,6 +27,7 @@
  *   → createTelemetryContainer() [rqi-2, ty=3]
  *   → createCommandsContainer()  [rqi-3, ty=3]
  *   → createSubscription()       [rqi-4, ty=23]
+ *   → createAckContainer()       [rqi-5, ty=3, rn=ack]
  *   → onSessionReady()           → commandListener.onConnectionStatusChange(true, ...)
  * </pre>
  *
@@ -469,7 +470,6 @@ public class OneM2MSession implements ProtocolClient, DroneCommandListener {
                         commandListener.onMoveTo(data.getDouble("lat"), data.getDouble("lng"));
                     break;
                 case "perform360":  commandListener.onPerform360(); break;
-                case "startRTMP":   commandListener.onStartRTMP(); break;
                 case "identify":
                     commandListener.onIdentify(data.optBoolean("state", false)); break;
                 case "startMission":
@@ -765,7 +765,6 @@ public class OneM2MSession implements ProtocolClient, DroneCommandListener {
     }
     @Override public void onStopMission()                      { commandListener.onStopMission(); }
     @Override public void onPauseMission()                     { commandListener.onPauseMission(); }
-    @Override public void onStartRTMP()                        { commandListener.onStartRTMP(); }
     @Override public void onSetZoom(float factor)              { commandListener.onSetZoom(factor); }
     @Override public void onSetCameraMode(String mode)         { commandListener.onSetCameraMode(mode); }
     @Override public void onGimbalAngle(float pitch, float yaw, String mode) {

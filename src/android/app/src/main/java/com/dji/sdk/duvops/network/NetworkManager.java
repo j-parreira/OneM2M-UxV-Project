@@ -274,9 +274,6 @@ public class NetworkManager implements ProtocolClient {
             case "perform360":
                 listener.onPerform360();
                 break;
-            case "startRTMP":
-                listener.onStartRTMP();
-                break;
             case "identify":
                 boolean idState = data.has("state") && data.getBoolean("state");
                 listener.onIdentify(idState);

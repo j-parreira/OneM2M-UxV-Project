@@ -547,11 +547,6 @@ public class FlightManager implements DroneCommandListener {
         missionThread.start();
     }
 
-    @Override
-    public void onStartRTMP() {
-        // RTMP é gerido na View (precisa de UI/Context)
-    }
-
     /**
      * Espera pelo takeoff completar ou timeout de 15s.
      *

@@ -28,7 +28,6 @@ package com.dji.sdk.duvops.network;
  *   <tr><td>{@code "startMission"}</td><td>{@link #onStartMission(String,String,int,float,String)}</td></tr>
  *   <tr><td>{@code "stopMission"}</td><td>{@link #onStopMission()}</td></tr>
  *   <tr><td>{@code "pauseMission"}</td><td>{@link #onPauseMission()}</td></tr>
- *   <tr><td>{@code "startRTMP"}</td><td>{@link #onStartRTMP()}</td></tr>
  *   <tr><td>{@code "setZoom"}</td><td>{@link #onSetZoom(float)}</td></tr>
  *   <tr><td>{@code "setCameraMode"}</td><td>{@link #onSetCameraMode(String)}</td></tr>
  * </table>
@@ -125,13 +124,6 @@ public interface DroneCommandListener {
      * Recebe o comando de pausar/retomar missão (toggle).
      */
     void onPauseMission();
-
-    // Streaming
-
-    /**
-     * Recebe o comando de iniciar stream RTMP.
-     */
-    void onStartRTMP();
 
     // --- Câmara ---
 
