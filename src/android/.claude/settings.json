@@ -1,0 +1,28 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash",
+      "Glob",
+      "Grep",
+      "Read",
+      "Edit",
+      "Write",
+      "Agent",
+      "WebFetch",
+      "WebSearch"
+    ],
+    "deny": [],
+    "warn": [
+      "Bash(git push)",
+      "Bash(git reset)",
+      "Bash(git clean)",
+      "Bash(git checkout)",
+      "Bash(git rebase)",
+      "Bash(git merge)",
+      "Bash(.*rm -rf.*|.*Remove-Item.*|.*del.*).*",
+      "Write(app/src/main/AndroidManifest.xml)",
+      "Write(app/build.gradle)",
+      "Write(gradle/**)"
+    ]
+  }
+}

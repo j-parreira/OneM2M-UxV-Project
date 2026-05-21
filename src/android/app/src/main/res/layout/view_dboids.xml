@@ -1,0 +1,103 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/dboids_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent">
+
+    <!-- 🎥 Vídeo ocupa o fundo -->
+    <com.dji.sdk.duvops.utils.VideoFeedView
+        android:id="@+id/dboids_primary_videofeed"
+        style="@style/main_camera_view"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:scaleType="centerCrop"
+         />
+
+
+    <!-- 🔝 Painel superior com botões -->
+    <LinearLayout
+        android:id="@+id/top_controls"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top"
+        android:background="#61000000"
+        android:gravity="end"
+        android:orientation="horizontal"
+        >
+
+        <EditText
+            android:id="@+id/websocketUrl"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:hint="Server IP"
+            android:inputType="text"
+            android:textAlignment="textEnd"
+            android:textColor="#FFF" />
+        <Button
+            android:id="@+id/connectws"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Connect WS" />
+        <Button
+            android:id="@+id/startRTMP"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Start Video" />
+        <Button
+            android:id="@+id/startSimulator"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Start Simulator" />
+
+        <Button
+            android:id="@+id/abort"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:backgroundTint="#DC1414"
+            android:text="Abort"
+            android:textColor="@android:color/white" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_horizontal"
+        android:visibility="gone">
+
+        <Button
+            android:id="@+id/startUDP"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Start UDP"
+            android:visibility="gone" />
+    </LinearLayout>
+    <LinearLayout
+        android:id="@+id/status_panel"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|start"
+        android:background="#44000000"
+        android:elevation="2dp"
+        android:orientation="vertical"
+        android:padding="8dp">
+
+        <TextView
+            android:id="@+id/statusField"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="4dp"
+            android:text="Status: Aguardar Ligação"
+            android:textColor="@android:color/white"
+            android:textSize="14sp" />
+
+        <TextView
+            android:id="@+id/messageField"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Mensagem"
+            android:textColor="@android:color/white"
+            android:textSize="14sp" />
+    </LinearLayout>
+
+</FrameLayout>

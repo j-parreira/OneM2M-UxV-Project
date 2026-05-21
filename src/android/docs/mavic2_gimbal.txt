@@ -1,0 +1,55 @@
+import dji.common.gimbal.Rotation;
+
+import dji.common.gimbal.RotationMode;
+
+import dji.common.util.CommonCallbacks.CompletionCallback;
+
+// ...
+
+private void rotateGimbalToAngle(float pitchAngle, float yawAngle) {
+
+    if (mGimbal != null) {
+
+        // Create a rotation command:
+
+        // pitchAngle for tilt, yawAngle for pan. Duration (e.g., 1 second).
+
+        Rotation rotation = new Rotation.Builder()
+
+            .pitch(pitchAngle)
+
+            .yaw(yawAngle)
+
+            .mode(RotationMode.ABSOLUTE_ANGLE) // Use ABSOLUTE_ANGLE or RELATIVE_ANGLE
+
+            .time(1) // Duration in seconds
+
+            .build();
+ 
+        mGimbal.rotate(rotation, new CompletionCallback() {
+
+            @Override
+
+            public void onResult(DJIError error) {
+
+                if (error == null) {
+
+                    // Success
+
+                } else {
+
+                    // Handle error (e.g., error.getDescription())
+
+                }
+
+            }
+
+        });
+
+    }
+
+}
+
+ 
+The Mavic 2 Enterprise has a controllable tilt (pitch) range of -90° to +30° and pan (yaw) of -75° to +75°.
+ 
