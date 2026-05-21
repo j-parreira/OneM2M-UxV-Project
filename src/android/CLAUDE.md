@@ -21,8 +21,8 @@ App Android para DJI Mavic 2 Enterprise Advanced (M2EA), instalada no RC (Remote
 3. Recebe comandos de voo via notificações OneM2M (`m2m:sgn`)
 4. Suporta múltiplos protocolos de transporte via interface `ProtocolClient`
 
-Funcionalidades de produção originais (RTMP, LDM mode, bridge mode) estão presentes
-mas são irrelevantes para o benchmark — não modificar nem remover.
+Funcionalidades de produção que não pertencem ao benchmark foram removidas:
+RTMP streaming, LDM mode, bridge mode, Bluetooth connector, firmware version display.
 
 ---
 
@@ -169,7 +169,6 @@ connect(host, 8180, serialNumber)
 - **`DuvopsView`** — ecrã de controlo principal; instancia e liga os managers
 - **`FlightActivity`** — wrapper fullscreen para `DuvopsView`
 - **`MainContent`** — home screen; SDK registration + botão para abrir FlightActivity
-- **`LoginView`** / **`HealthInformationView`** — views de produção, não usadas no fluxo benchmark
 
 ---
 
@@ -368,7 +367,7 @@ connect(host, 8180, serialNumber)
 - **Racional:** Para o benchmark ser válido, o protocolo oneM2M deve ser usado correctamente
   end-to-end; um proxy simples não mediria o overhead real do middleware
 - **Consequências:**
-  - `OneM2MSession` gere a sequência de registo (5 passos assíncronos)
+  - `OneM2MSession` gere a sequência de registo (6 passos assíncronos)
   - Conflito (rsc 4105) é tratado como sucesso para permitir reconnect sem limpar o CSE
   - Telemetria é fire-and-forget (sem aguardar ACK) para não bloquear o timer de 250 ms
 
@@ -381,12 +380,13 @@ connect(host, 8180, serialNumber)
 | Video feed morre após 500 ms no simulator | Testar apenas no device físico |
 | Virtual sticks derivam em missões longas | PID tuning a cada 200 ms (não mais rápido) |
 | Zoom indisponível em modo IR | Verificar stream antes do comando zoom |
-| WebSocket desliga quando RC entra em sleep | Implementar reconnect automático em OneM2MSession |
+| Video feed morre após 500 ms no simulator | Testar apenas no device físico |
+| Virtual sticks derivam em missões longas | PID tuning a cada 200 ms (não mais rápido) |
+| Zoom indisponível em modo IR | Verificar stream antes do comando zoom |
+| WebSocket desliga quando RC entra em sleep | Reconnect automático implementado (backoff 1 s→30 s) |
 | Câmara térmica requer mudança de modo | Definir cameraMode antes do zoom |
 | Gimbal pitch fora de range em algumas missões | Clamp pitch para [-90,30] antes de enviar |
-| `nu` na subscrição pode não funcionar | Se notificações não chegarem, trocar `/id-in/uxv` por `aeOriginator` |
-| Sessão suspensa se CSE não responder | Implementar timeout nos pendingCallbacks de OneM2MSession |
-| Sem reconnect automático | DuvopsView.connectToCse() tem de ser chamado manualmente |
+| `nu` na subscrição pode não funcionar | Se notificações não chegarem, trocar `/id-in/uxv` por `aeOriginator` em `OneM2MSession.createSubscription()` |
 
 ---
 
