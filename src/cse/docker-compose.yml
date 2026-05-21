@@ -1,0 +1,76 @@
+# docker-compose.yml — UxV Benchmark CSE stack
+#
+# Services:
+#   mosquitto  — Eclipse Mosquitto MQTT broker (v2)
+#   acme-cse   — ACME oneM2M CSE (v2025.11), connects to mosquitto as MQTT client
+#
+# Port mapping (all exposed to host for Android RC on LAN):
+#   1883       MQTT  (mosquitto)
+#   8080       HTTP  (acme-cse)
+#   8180       WebSocket (acme-cse)
+#   5683/udp   CoAP  (acme-cse)
+#
+# Startup:
+#   docker compose up --build
+#
+# Smoke test (CSE ready when this returns HTTP 200):
+#   curl http://localhost:8080/onem2m
+#
+# Scenario 3 — inject packet loss from Streamlit orchestrator:
+#   docker exec acme-cse tc qdisc add dev eth0 root netem loss 5%
+#   docker exec acme-cse tc qdisc del dev eth0 root
+
+services:
+
+  # ── MQTT broker ────────────────────────────────────────────────────────────
+  # ACME CSE is an MQTT *client* — it connects to this broker.
+  # Port 1883 is mapped to the host so the Android RC can also publish/subscribe
+  # directly when testing the MQTT protocol binding.
+  mosquitto:
+    image: eclipse-mosquitto:2
+    container_name: mosquitto
+    restart: unless-stopped
+    ports:
+      - "1883:1883"
+    volumes:
+      - ./config/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+    networks:
+      - cse-net
+    healthcheck:
+      test: ["CMD", "mosquitto_pub", "-t", "health", "-m", "ok", "-q", "0"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+  # ── ACME CSE ───────────────────────────────────────────────────────────────
+  acme-cse:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: acme-cse
+    restart: unless-stopped
+    depends_on:
+      mosquitto:
+        condition: service_healthy
+    ports:
+      - "8080:8080"          # HTTP — REST binding
+      - "8180:8180"          # WebSocket — persistent bidirectional binding
+      - "5683:5683/udp"      # CoAP — UDP; /udp suffix is mandatory
+    volumes:
+      - ./config/acme.ini:/data/acme.ini:ro   # config — edit without rebuild
+      - acme-data:/data/db                     # TinyDB — persistent across restarts
+    cap_add:
+      - NET_ADMIN            # required for tc netem (Scenario 3)
+    networks:
+      - cse-net
+
+# ── Named volume for TinyDB persistence ────────────────────────────────────
+volumes:
+  acme-data:
+
+# ── Internal bridge network ────────────────────────────────────────────────
+# acme-cse reaches mosquitto via its service name ("mosquitto")
+networks:
+  cse-net:
+    driver: bridge
