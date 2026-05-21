@@ -71,23 +71,24 @@ void setCommandLogListener(CommandLogListener listener);
 **Sequência de inicialização OneM2M** (automática após WebSocket abrir, 6 passos):
 ```
 connect(host, 8180, serialNumber)
-  → WebSocket abre → registerAE()              [POST /id-in, ty=2]
-  → resp 2001/4105 → createTelemetryContainer  [POST /id-in/uxv, ty=3, rn=telemetry]
-  → resp 2001/4105 → createCommandsContainer   [POST /id-in/uxv, ty=3, rn=commands]
-  → resp 2001/4105 → createSubscription        [POST /id-in/uxv/commands, ty=23]
-  → resp 2001/4105 → createAckContainer        [POST /id-in/uxv, ty=3, rn=ack]
+  → WebSocket abre (subprotocolo "oneM2M.json", header X-M2M-Origin: C+serial)
+  → registerAE()              [to="id-in", ty=2, poa=["ws://host:8180"]]
+  → resp 2001/4105 → createTelemetryContainer  [to="cse-in/uxv", ty=3, rn=telemetry]
+  → resp 2001/4105 → createCommandsContainer   [to="cse-in/uxv", ty=3, rn=commands]
+  → resp 2001/4105 → createSubscription        [to="cse-in/uxv/commands", ty=23, nu=aeOriginator]
+  → resp 2001/4105 → createAckContainer        [to="cse-in/uxv", ty=3, rn=ack]
   → resp 2001/4105 → onSessionReady()
   → commandListener.onConnectionStatusChange(true, ...) → startTelemetry()
 ```
 
-**Árvore de recursos após ligação:**
+**Árvore de recursos após ligação** (HTTP paths usam `/cse-in/`, NÃO `/id-in/`):
 ```
-/id-in
-└── uxv                  ← AE
-    ├── telemetry        ← CNT (mni=10) — CINs de telemetria
-    ├── commands         ← CNT (mni=5)  — CINs de comandos
-    │   └── sub-commands ← SUB — notificação ao AE
-    └── ack              ← CNT (mni=200) — ACKs de comandos (Cenário 2)
+/id-in                   ← CSE-Base (apenas para GET /id-in)
+/cse-in/uxv              ← AE (HTTP path real; WS to = "cse-in/uxv")
+/cse-in/uxv/telemetry    ← CNT (mni=10)  — CINs de telemetria
+/cse-in/uxv/commands     ← CNT (mni=5)   — CINs de comandos
+/cse-in/uxv/commands/sub-commands  ← SUB — notificação ao AE
+/cse-in/uxv/ack          ← CNT (mni=200) — ACKs de comandos (Cenário 2)
 ```
 
 **CSE host**: configurado no campo `hostname` da `DuvopsView`.
@@ -98,12 +99,12 @@ connect(host, 8180, serialNumber)
 **Originator OneM2M**: `"C" + serialNumber` (limpo, max 32 chars)
 - Ex: serial `3LKFD12ABC` → originator `C3LKFD12ABC`
 
-**Subscrição de comandos**:
-- Container: `/id-in/uxv/commands`
-- `nu`: **`aeOriginator`** (ex: `C3LKFD12ABC`) — NÃO o URI `/id-in/uxv`
-- `enc.net = [3]`: notificar na criação de filho directo (novo CIN)
-- ACME CSE associa ligações WebSocket ao originator. Usar o URI do recurso cria
-  a subscrição mas as notificações **nunca chegam** — bug confirmado e corrigido.
+**Subscrição de comandos** (validado contra ACME CSE v2025.11):
+- Container alvo: `cse-in/uxv/commands` (WS `to` field)
+- `nu`: **`aeOriginator`** (ex: `C3LKFD12ABC`) — NÃO o URI do recurso
+- `enc.net = [3]`: notificar na criação de filho directo
+- `nct`: **OMITIR** — `nct=2` + `net=[3]` é inválido em v2025.11 (rsc=4000)
+- `poa`: **OBRIGATÓRIO** no registo AE — sem `poa`, o CSE descarta notificações silenciosamente
 
 **Telemetria** (250 ms → `m2m:cin` em `/id-in/uxv/telemetry`):
 ```json
@@ -187,6 +188,47 @@ connect(host, 8180, serialNumber)
 | `HttpProtocolClient` | `network/HttpProtocolClient.java` | Depois MQTT |
 | `CoApProtocolClient` | `network/CoApProtocolClient.java` | Depois HTTP (lib californium) |
 | Validar campo `nu` na subscrição | `OneM2MSession.createSubscription()` | Ao testar no device com CSE real |
+
+---
+
+## ACME CSE v2025.11 — WebSocket Integration Findings
+
+Descobertos por testes end-to-end contra o CSE real. **Todos verificados empiricamente.**
+Ver `docs/ai-context/cse-dev.md` → secção "WebSocket Binding" para detalhe completo.
+
+### Formato das mensagens (flat JSON — sem wrappers)
+
+```
+// Request  → flat: {"op":1,"to":"cse-in/uxv/telemetry","fr":"Cxxx","rqi":"r1","rvi":"3","ty":4,"pc":{...}}
+// Response → flat: {"rsc":2001,"rqi":"r1","pc":{...}}          — detectar por "rsc" no topo
+// Notify   → flat: {"op":5,"rqi":"n1","pc":{"m2m:sgn":{...}}} — detectar por "op"=5 no topo
+// ACK      → flat: {"rsc":2000,"rqi":"n1","to":"Cxxx","fr":"Cxxx"}
+```
+
+### Regras específicas de v2025.11
+
+| Regra | Detalhes |
+|---|---|
+| Subprotocolo WS obrigatório | `Sec-WebSocket-Protocol: oneM2M.json` no upgrade |
+| `X-M2M-Origin` no upgrade | Header obrigatório — sem ele rsc=4103 em todas as ops |
+| `rvi="3"` em todos os requests | Campo obrigatório — sem ele rsc=4000 |
+| `to` para AE registration | `"id-in"` (CSE-relative, SEM leading slash) |
+| `to` para outros recursos | `"cse-in/{ae-rn}/..."` (CSE-Base rn, SEM leading slash) |
+| `aei` no body do AE | PROIBIDO — non-provision attribute → rsc=4000 |
+| `poa` no body do AE | OBRIGATÓRIO — sem `poa` as notificações são descartadas silenciosamente |
+| `nct` na subscrição | OMITIR — nct=2 + net=[3] é inválido → rsc=4000 |
+| `cnf` no CIN | OMITIR — "application/json" falha validação → rsc=4000 |
+| ACP para o AE | Não é criado automaticamente → `enableACPChecks=false` no CSE |
+
+### `poa` — a regra mais importante (e menos óbvia)
+
+Sem `poa` no registo do AE, as notificações de subscrição são **silenciosamente descartadas**.
+O CSE resolve o alvo da notificação (`nu`) → obtém o AE → lê o `poa` → se `poa=None` → devolve
+lista vazia → notificação perdida. Nenhum erro é reportado.
+
+A `poa` deve ser o endereço WebSocket do CSE: `ws://{host}:{port}` (o mesmo a que a app ligou).
+O CSE tenta abrir uma nova ligação WS para esse endereço, mas como já existe uma ligação com
+o mesmo originator em `associatedConnections`, reutiliza-a.
 
 ---
 
@@ -386,7 +428,9 @@ connect(host, 8180, serialNumber)
 | WebSocket desliga quando RC entra em sleep | Reconnect automático implementado (backoff 1 s→30 s) |
 | Câmara térmica requer mudança de modo | Definir cameraMode antes do zoom |
 | Gimbal pitch fora de range em algumas missões | Clamp pitch para [-90,30] antes de enviar |
-| `nu` na subscrição pode não funcionar | Se notificações não chegarem, trocar `/id-in/uxv` por `aeOriginator` em `OneM2MSession.createSubscription()` |
+| Notificações não chegam sem `poa` | `poa=['ws://host:port']` obrigatório no registo AE — já corrigido |
+| `nu='/id-in/uxv'` não entregava notificações | `nu=aeOriginator` correcto — já corrigido |
+| HTTP paths incorrectos `/id-in/...` | Paths corrector: `/cse-in/...` — já corrigido em CSE_BASE |
 
 ---
 
