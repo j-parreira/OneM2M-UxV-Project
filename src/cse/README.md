@@ -38,11 +38,15 @@ docker compose up --build
 docker compose up
 ```
 
-Wait ~30 s for the CSE to initialise, then verify:
+Wait ~45 s for the CSE to initialise, then verify:
 
 ```bash
-curl http://localhost:8080/onem2m
-# Expected: HTTP 200, body contains "ty": 5 (CSE-Base resource type)
+curl http://localhost:8080/id-in \
+  -H "X-M2M-RI: test-001" \
+  -H "X-M2M-Origin: CAdmin" \
+  -H "X-M2M-RVI: 3" \
+  -H "Accept: application/json"
+# Expected: HTTP 200, body contains "ty": 5 and "csi": "/id-in"
 ```
 
 Open the ACME CSE web UI (resource tree browser):

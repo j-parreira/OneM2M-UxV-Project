@@ -34,10 +34,7 @@ EXPOSE 8180/tcp
 # CoAP       — UDP; must be declared explicitly or Docker only exposes TCP
 EXPOSE 5683/udp
 
-# Healthcheck via Python (no extra packages needed)
-HEALTHCHECK --interval=15s --timeout=5s --start-period=45s --retries=5 \
-    CMD python3 -c \
-        "import urllib.request; urllib.request.urlopen('http://localhost:8080/onem2m', timeout=4)" \
-        || exit 1
+# Healthcheck: GET /id-in with mandatory OneM2M headers, via Python (no extra packages needed)
+HEALTHCHECK --interval=15s --timeout=5s --start-period=60s --retries=5 CMD python3 -c "import urllib.request; urllib.request.urlopen(urllib.request.Request('http://localhost:8080/id-in',headers={'X-M2M-RI':'hc','X-M2M-Origin':'CAdmin','X-M2M-RVI':'3'}),timeout=4)"
 
 CMD ["/bin/sh", "/runACME.sh"]

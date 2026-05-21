@@ -210,11 +210,21 @@ and run with `--cap-add NET_ADMIN` in `docker-compose.yml`.
 
 ## Health Check
 
-The CSE exposes a REST endpoint at `GET http://localhost:8080/onem2m` that returns the
-CSE-Base resource. Use this as the Docker health check and as the integration smoke test.
+The CSE-Base is accessible at `GET http://localhost:8080/id-in` (path = `/{cseID}`).
+OneM2M HTTP requests require three mandatory headers:
 
-Expected response: HTTP 200 with `Content-Type: application/json` and a body containing
-`"ty": 5` (CSE-Base resource type).
+```bash
+curl http://localhost:8080/id-in \
+  -H "X-M2M-RI: test-001" \
+  -H "X-M2M-Origin: CAdmin" \
+  -H "X-M2M-RVI: 3" \
+  -H "Accept: application/json"
+```
+
+Expected response: HTTP 200 with body containing `"ty": 5` (CSE-Base resource type)
+and `"csi": "/id-in"`.
+
+> The old path `/onem2m` was incorrect — the correct path is `/{cseID}` = `/id-in`.
 
 ---
 
