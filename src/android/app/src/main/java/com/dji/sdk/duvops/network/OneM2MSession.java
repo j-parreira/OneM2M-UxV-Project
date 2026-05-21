@@ -20,16 +20,22 @@
  *             → SocketListener
  * </pre>
  *
- * <h3>Sequência de inicialização</h3>
+ * <h3>Sequência de inicialização (ACME CSE v2025.11)</h3>
  * <pre>
- * connect() → transport.connect() → WebSocket abre → onConnectionStatusChange(true)
- *   → registerAE()               [rqi-1, ty=2]
- *   → createTelemetryContainer() [rqi-2, ty=3]
- *   → createCommandsContainer()  [rqi-3, ty=3]
- *   → createSubscription()       [rqi-4, ty=23]
- *   → createAckContainer()       [rqi-5, ty=3, rn=ack]
+ * connect() → transport.connect() (ws://host:8180, subprotocol "oneM2M.json")
+ *   → WebSocket abre → onConnectionStatusChange(true)
+ *   → registerAE()               [to="id-in",     ty=2, no aei field]
+ *   → createTelemetryContainer() [to="cse-in/uxv", ty=3, rn=telemetry]
+ *   → createCommandsContainer()  [to="cse-in/uxv", ty=3, rn=commands]
+ *   → createSubscription()       [to="cse-in/uxv/commands", ty=23, nu=aeOriginator]
+ *   → createAckContainer()       [to="cse-in/uxv", ty=3, rn=ack]
  *   → onSessionReady()           → commandListener.onConnectionStatusChange(true, ...)
  * </pre>
+ *
+ * <h3>Formato de requests (ACME CSE v2025.11)</h3>
+ * <p>JSON flat sem wrapper {@code m2m:rqp}. Campo {@code rvi="3"} obrigatório.
+ * <p>Respostas: campo {@code rsc} no top-level (sem wrapper {@code m2m:rsp}).
+ * <p>ACKs de notificação: JSON flat com {@code rsc=2000} (sem wrapper {@code m2m:rsp}).
  *
  * <h3>Reconnect backoff</h3>
  * <p>Em caso de falha (WebSocket ou erro OneM2M), retenta após 1 s → 2 s → 4 s → ... → 30 s.
@@ -63,8 +69,27 @@ public class OneM2MSession implements ProtocolClient, DroneCommandListener {
 
     // ── OneM2M resource paths ────────────────────────────────────────────────
 
-    /** Base do CSE — deve corresponder ao {@code cseID} em {@code acme.ini}. */
-    private static final String CSE_BASE = "/id-in";
+    /**
+     * Identificador do CSE (CSE-ID, sem leading slash) — alvo do registo AE.
+     *
+     * <p>Corresponde ao {@code cseID} em {@code acme.ini}.
+     * Usado APENAS no {@code to} do request de registo do AE.
+     * Todos os outros recursos usam {@link #CSE_BASE} (CSE-Base resource name).
+     */
+    private static final String CSE_ID   = "id-in";
+
+    /**
+     * Resource name do CSE-Base — prefixo de todos os caminhos de recursos.
+     *
+     * <p>Corresponde ao {@code cseName} em {@code acme.ini}.
+     * Em ACME CSE v2025.11, os recursos são acessíveis em:
+     * {@code /{cseName}/{ae-rn}/{container-rn}/...} = {@code /cse-in/uxv/telemetry/...}
+     *
+     * <p>Este valor diverge do CSE-ID ({@code /id-in}) — são dois conceitos distintos:
+     * o CSE-ID é usado para identificar o CSE na rede oneM2M; o CSE-Base resource name
+     * é o path HTTP/WS onde residem os recursos filho.
+     */
+    private static final String CSE_BASE = "cse-in";
 
     /** Nome do recurso AE. */
     private static final String AE_NAME  = "uxv";
@@ -257,7 +282,9 @@ public class OneM2MSession implements ProtocolClient, DroneCommandListener {
         aeOriginator = "C" + (cleaned.length() > 32 ? cleaned.substring(0, 32) : cleaned);
 
         notifyStatus("Connecting to ws://" + host + ":" + port + "...");
-        transport.connect(host, port, aeId);
+        // Pass aeOriginator (not raw aeId) so NetworkManager sends the correct
+        // X-M2M-Origin header in the WebSocket upgrade request.
+        transport.connect(host, port, aeOriginator);
     }
 
     /**
@@ -284,9 +311,9 @@ public class OneM2MSession implements ProtocolClient, DroneCommandListener {
     public void sendTelemetry(String jsonPayload) {
         if (!ready) return;
         try {
+            // cnf omitido — "application/json" falha validação em ACME CSE v2025.11
             JSONObject pc = new JSONObject()
                     .put("m2m:cin", new JSONObject()
-                            .put("cnf", "application/json")
                             .put("con", jsonPayload));
             sendRequest(OP_CREATE, CSE_BASE + "/" + AE_NAME + "/telemetry", TY_CIN, pc, null);
         } catch (JSONException e) {
@@ -347,24 +374,27 @@ public class OneM2MSession implements ProtocolClient, DroneCommandListener {
     // ── Handlers de mensagens raw ────────────────────────────────────────────
 
     /**
-     * Processa mensagens JSON recebidas do CSE.
+     * Processa mensagens JSON recebidas do CSE (formato flat — ACME CSE v2025.11).
+     *
+     * <p>Formato flat: sem wrappers {@code m2m:rsp} ou {@code m2m:rqp}. O tipo
+     * de mensagem é determinado pela presença dos campos {@code rsc} (resposta)
+     * ou {@code op} (request/notificação).
      *
      * <ul>
-     *   <li>{@code m2m:rsp} — resposta a um request da sequência de registo</li>
-     *   <li>{@code m2m:rqp} com {@code op=5} — notificação de comando</li>
+     *   <li>Resposta: campo {@code rsc} no topo → {@link #handleResponse}</li>
+     *   <li>Notificação: campo {@code op=5} no topo → {@link #handleNotification} + ACK</li>
      * </ul>
      */
     private void onRawMessage(String json) {
         try {
             JSONObject obj = new JSONObject(json);
-            if (obj.has("m2m:rsp")) {
-                handleResponse(obj.getJSONObject("m2m:rsp"));
-            } else if (obj.has("m2m:rqp")) {
-                JSONObject rqp = obj.getJSONObject("m2m:rqp");
-                if (rqp.optInt("op", 0) == OP_NOTIFY) {
-                    handleNotification(rqp);
-                    sendNotifyAck(rqp.optString("rqi", ""));
-                }
+            // Flat format: response has "rsc" at top level
+            if (obj.has("rsc")) {
+                handleResponse(obj);
+            // Flat format: notification has "op": 5 at top level
+            } else if (obj.optInt("op", 0) == OP_NOTIFY) {
+                handleNotification(obj);
+                sendNotifyAck(obj.optString("rqi", ""));
             }
         } catch (JSONException e) {
             Log.e(TAG, "onRawMessage: " + e.getMessage());
@@ -413,15 +443,17 @@ public class OneM2MSession implements ProtocolClient, DroneCommandListener {
 
     /**
      * Envia ACK ao CSE para a notificação recebida (obrigatório para evitar reenvio).
+     *
+     * <p>Formato flat (sem wrapper {@code m2m:rsp}) — ACME CSE v2025.11.
      */
     private void sendNotifyAck(String rqi) {
         try {
+            // Flat ACK response — no m2m:rsp wrapper
             JSONObject ack = new JSONObject()
-                    .put("m2m:rsp", new JSONObject()
-                            .put("rsc", RSC_OK)
-                            .put("rqi", rqi)
-                            .put("to",  aeOriginator)
-                            .put("fr",  aeOriginator));
+                    .put("rsc", RSC_OK)
+                    .put("rqi", rqi)
+                    .put("to",  aeOriginator)
+                    .put("fr",  aeOriginator);
             transport.sendTelemetry(ack.toString());
         } catch (JSONException e) {
             Log.e(TAG, "sendNotifyAck: " + e.getMessage());
@@ -429,15 +461,10 @@ public class OneM2MSession implements ProtocolClient, DroneCommandListener {
     }
 
     /**
-     * Parseia o JSON de comando e despacha ao {@code commandListener}.
-     *
-     * <p>Formato: {@code {"command": "takeoff", ...}} (igual ao modo raw legacy).
-     */
-    /**
-     * Parseia e despacha um JSON de comando.
+     * Parseia e despacha um JSON de comando ao {@code commandListener}.
      *
      * <p>Regista {@code t_recv_ms} antes do switch e envia um ACK CIN a
-     * {@code /id-in/uxv/ack} após dispatch para medição de latência (Cenário 2).
+     * {@code cse-in/uxv/ack} após dispatch para medição de latência (Cenário 2).
      * O Streamlit deve incluir {@code t_cmd_ms} e {@code seq_cmd} no CIN de comando.
      *
      * @param commandJson JSON do campo {@code con} do CIN recebido
@@ -512,7 +539,7 @@ public class OneM2MSession implements ProtocolClient, DroneCommandListener {
     }
 
     /**
-     * Envia ACK de comando ao container {@code /id-in/uxv/ack} (fire-and-forget).
+     * Envia ACK de comando ao container {@code cse-in/uxv/ack} (fire-and-forget).
      *
      * <p>Campos do ACK:
      * <ul>
@@ -531,9 +558,9 @@ public class OneM2MSession implements ProtocolClient, DroneCommandListener {
                     .put("t_cmd_ms",  tCmdMs)
                     .put("t_recv_ms", tRecvMs)
                     .put("t_exec_ms", System.currentTimeMillis());
+            // cnf omitido — validação falha em ACME CSE v2025.11 com "application/json"
             JSONObject pc = new JSONObject()
                     .put("m2m:cin", new JSONObject()
-                            .put("cnf", "application/json")
                             .put("con", ackData.toString()));
             sendRequest(OP_CREATE, CSE_BASE + "/" + AE_NAME + "/ack", TY_CIN, pc, null);
         } catch (JSONException e) {
@@ -543,22 +570,43 @@ public class OneM2MSession implements ProtocolClient, DroneCommandListener {
 
     // ── Sequência de registo OneM2M ──────────────────────────────────────────
 
-    /** Passo 1: registo do AE no CSE. Conflito (4105) = AE já existe → continuar. */
+    /**
+     * Passo 1: registo do AE no CSE.
+     *
+     * <p>Usa {@code to = CSE_ID} ("id-in", CSE-relative sem leading slash) — o ACME CSE
+     * v2025.11 rejeita {@code "/id-in"} (too short) e {@code "/id-in/cse-in"} cria o AE
+     * numa localização inesperada. Apenas {@code "id-in"} cria o AE correctamente em
+     * {@code /cse-in/uxv} (acessível via {@code CSE_BASE + "/" + AE_NAME}).
+     *
+     * <p>O campo {@code aei} NÃO é incluído no body — é um atributo não-provision em
+     * v2025.11 (non-provision attribute). O CSE atribui {@code aei = originator}
+     * automaticamente a partir do campo {@code fr} do request.
+     *
+     * <p>Conflito (4105) = AE já existe → tratar como sucesso e continuar.
+     */
     private void registerAE() {
         notifyStatus("Registering AE (" + aeOriginator + ")...");
         try {
+            // poa (Point of Access) = CSE WebSocket address.
+            // REQUIRED for notification delivery: without poa the CSE discards all
+            // subscription notifications silently (no poa → no delivery route).
+            // The CSE uses this URL to route notifications; since our WS connection
+            // is already associated with aeOriginator, it reuses the existing socket.
+            String wsPoA = "ws://" + savedHost + ":" + savedPort;
             JSONObject pc = new JSONObject()
                     .put("m2m:ae", new JSONObject()
                             .put("rn",  AE_NAME)
                             .put("api", AE_API)
-                            .put("aei", aeOriginator)
+                            // aei NOT included — non-provision attribute in v2025.11
                             .put("srv", new JSONArray().put("3"))
-                            .put("rr",  true));
-            sendRequest(OP_CREATE, CSE_BASE, TY_AE, pc, this::createTelemetryContainer);
+                            .put("rr",  true)
+                            .put("poa", new JSONArray().put(wsPoA)));
+            // to = CSE_ID ("id-in") — CSE-relative identifier of the CSE-Base
+            sendRequest(OP_CREATE, CSE_ID, TY_AE, pc, this::createTelemetryContainer);
         } catch (JSONException e) { Log.e(TAG, "registerAE: " + e.getMessage()); }
     }
 
-    /** Passo 2: criação do container {@code /id-in/uxv/telemetry}. */
+    /** Passo 2: criação do container {@code cse-in/uxv/telemetry} (mni=10). */
     private void createTelemetryContainer() {
         notifyStatus("Creating telemetry container...");
         try {
@@ -571,7 +619,7 @@ public class OneM2MSession implements ProtocolClient, DroneCommandListener {
         } catch (JSONException e) { Log.e(TAG, "createTelemetryContainer: " + e.getMessage()); }
     }
 
-    /** Passo 3: criação do container {@code /id-in/uxv/commands}. */
+    /** Passo 3: criação do container {@code cse-in/uxv/commands} (mni=5). */
     private void createCommandsContainer() {
         notifyStatus("Creating commands container...");
         try {
@@ -588,7 +636,7 @@ public class OneM2MSession implements ProtocolClient, DroneCommandListener {
      * Passo 4: subscrição ao container de comandos.
      *
      * <p>O CSE entrega notificações via WebSocket quando um novo CIN é criado em
-     * {@code /id-in/uxv/commands}. O campo {@code nu} deve ser o **originator** do AE
+     * {@code cse-in/uxv/commands}. O campo {@code nu} deve ser o **originator** do AE
      * (ex: {@code C3LKFD12ABC}), não o URI do recurso AE ({@code /id-in/uxv}).
      *
      * <p>O ACME CSE associa ligações WebSocket ao originator — só entrega a notificação
@@ -607,16 +655,15 @@ public class OneM2MSession implements ProtocolClient, DroneCommandListener {
                             // net=3: notificar na criação de filho directo (novo CIN de comando)
                             .put("enc", new JSONObject().put("net", new JSONArray().put(3)))
                             // nu = aeOriginator: ACME CSE entrega na ligação WS do originator
-                            .put("nu",  new JSONArray().put(aeOriginator))
-                            // nct=2: incluir todos os atributos do CIN na notificação
-                            .put("nct", 2));
+                            .put("nu",  new JSONArray().put(aeOriginator)));
+                            // nct omitido — nct=2 + net=[3] é inválido em ACME CSE v2025.11
             sendRequest(OP_CREATE, CSE_BASE + "/" + AE_NAME + "/commands", TY_SUB, pc,
                     this::createAckContainer);
         } catch (JSONException e) { Log.e(TAG, "createSubscription: " + e.getMessage()); }
     }
 
     /**
-     * Passo 5: criação do container de ACKs de comandos ({@code /id-in/uxv/ack}).
+     * Passo 5: criação do container de ACKs de comandos ({@code cse-in/uxv/ack}).
      *
      * <p>Após cada comando recebido, a app envia um CIN aqui com:
      * {@code {command, seq_cmd, t_cmd_ms, t_recv_ms, t_exec_ms}}.
@@ -644,7 +691,7 @@ public class OneM2MSession implements ProtocolClient, DroneCommandListener {
         Log.d(TAG, "OneM2M session ready — AE=" + aeOriginator);
         notifyStatus("OneM2M ready — " + aeOriginator);
         commandListener.onConnectionStatusChange(true,
-                "Connected to OneM2M CSE [" + CSE_BASE + "]");
+                "Connected to OneM2M CSE [/" + CSE_ID + "]");
     }
 
     // ── Tratamento de erros e reconnect ──────────────────────────────────────
@@ -688,27 +735,31 @@ public class OneM2MSession implements ProtocolClient, DroneCommandListener {
     /**
      * Constrói e envia um request OneM2M via transporte, com timeout opcional.
      *
+     * <p>Formato flat JSON (sem wrapper {@code m2m:rqp}) conforme ACME CSE v2025.11.
+     * O campo {@code rvi="3"} é obrigatório nesta versão.
+     *
      * <p>Se {@code onSuccess != null}, agenda um timeout de {@value REQUEST_TIMEOUT_S} s.
      * Se a resposta chegar antes do timeout, o timeout é cancelado. Se o timeout disparar
      * sem resposta, chama {@link #handleRegistrationFailure}.
      *
-     * @param op        código de operação (OP_CREATE)
-     * @param to        path do recurso alvo
-     * @param ty        tipo de recurso (TY_AE, TY_CNT, TY_CIN, TY_SUB)
+     * @param op        código de operação (OP_CREATE=1, OP_NOTIFY=5)
+     * @param to        path do recurso alvo (CSE-relative, ex: "cse-in/uxv/telemetry")
+     * @param ty        tipo de recurso (TY_AE=2, TY_CNT=3, TY_CIN=4, TY_SUB=23)
      * @param pc        conteúdo do pedido
      * @param onSuccess callback em caso de resposta de sucesso; {@code null} para fire-and-forget
      */
     private void sendRequest(int op, String to, int ty, JSONObject pc, Runnable onSuccess) {
         String rqi = "rqi-" + rqiCounter.incrementAndGet();
         try {
+            // Flat format (no m2m:rqp wrapper) — required by ACME CSE v2025.11 WebSocket binding
             JSONObject request = new JSONObject()
-                    .put("m2m:rqp", new JSONObject()
-                            .put("op",  op)
-                            .put("to",  to)
-                            .put("fr",  aeOriginator)
-                            .put("rqi", rqi)
-                            .put("ty",  ty)
-                            .put("pc",  pc));
+                    .put("op",  op)
+                    .put("to",  to)
+                    .put("fr",  aeOriginator)
+                    .put("rqi", rqi)
+                    .put("rvi", "3")   // release version indicator — mandatory in v2025.11
+                    .put("ty",  ty)
+                    .put("pc",  pc);
 
             if (onSuccess != null) {
                 pending.put(rqi, onSuccess);

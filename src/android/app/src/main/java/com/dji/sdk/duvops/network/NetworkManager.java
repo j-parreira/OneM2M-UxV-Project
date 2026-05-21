@@ -142,6 +142,13 @@ public class NetworkManager implements ProtocolClient {
         Request request = new Request.Builder()
                 .url(serverUrl)
                 .addHeader("dboidsID", aeId)
+                // oneM2M WebSocket subprotocol — required by ACME CSE v2025.11
+                // Without this header the server returns HTTP 400 "missing subprotocol"
+                .addHeader("Sec-WebSocket-Protocol", "oneM2M.json")
+                // oneM2M originator in the WS upgrade headers — required by ACME CSE v2025.11
+                // The CSE associates this connection with the originator from this header.
+                // Without it, all non-CAdmin requests return 4103 "no X-M2M-Origin header".
+                .addHeader("X-M2M-Origin", aeId)
                 .build();
 
         SocketListener socketListener = new SocketListener(this);
