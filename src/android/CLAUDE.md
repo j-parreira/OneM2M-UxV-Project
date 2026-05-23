@@ -106,21 +106,19 @@ connect(host, 8180, serialNumber)
 - `nct`: **OMITIR** — `nct=2` + `net=[3]` é inválido em v2025.11 (rsc=4000)
 - `poa`: **OBRIGATÓRIO** no registo AE — sem `poa`, o CSE descarta notificações silenciosamente
 
-**Telemetria** (250 ms → `m2m:cin` em `/id-in/uxv/telemetry`):
+**Telemetria** (250 ms → `m2m:cin` em `cse-in/uxv/telemetry`, flat JSON — sem wrapper):
 ```json
 {
-  "m2m:rqp": {
-    "op": 1, "to": "/id-in/uxv/telemetry", "fr": "CserialXYZ",
-    "rqi": "rqi-42", "ty": 4,
-    "pc": {
-      "m2m:cin": {
-        "cnf": "application/json",
-        "con": "{ <telemetry JSON abaixo> }"
-      }
+  "op": 1, "to": "cse-in/uxv/telemetry", "fr": "CserialXYZ",
+  "rqi": "rqi-42", "rvi": "3", "ty": 4,
+  "pc": {
+    "m2m:cin": {
+      "con": "{ <telemetry JSON abaixo> }"
     }
   }
 }
 ```
+> `cnf` OMITIDO — `"application/json"` falha validação em ACME CSE v2025.11 (rsc=4000)
 
 **Telemetry JSON** (campo `con`, 20+ campos):
 ```json
@@ -173,21 +171,28 @@ connect(host, 8180, serialNumber)
 
 ---
 
-## Pending for Benchmark (implementar antes de testar)
+## Estado da Implementação Multi-Protocolo
 
-| Item | Onde | Prioridade |
+### Completo ✅
+| Item | Notas |
+|---|---|
+| Campos `seq` + `t_send_ms` na telemetria | — |
+| Reconnect automático com backoff | 1s→30s |
+| Timeout na registration sequence | 10s/request |
+| Command ACK (`cse-in/uxv/ack`) | `{command, seq_cmd, t_cmd_ms, t_recv_ms, t_exec_ms}` |
+| Configurable telemetry rate (`setTelemetryRate`) | — |
+| Estado do drone na UI | droneStateField |
+| WebSocket transport (`NetworkManager.java`) | Testado end-to-end contra ACME CSE v2025.11 |
+| `ProtocolClient` interface | Desenhada para os 4 transportes |
+| `OneM2MSession` (decorator) | Protocol-agnostic; partilhado pelos 4 transportes |
+
+### Pendente 🔜 (para benchmark completo)
+| Item | Ficheiro a criar | Notas |
 |---|---|---|
-| ~~Campos `seq` + `t_send_ms` na telemetria~~ | ✅ Implementado | — |
-| ~~Reconnect automático com backoff~~ | ✅ Implementado (1s→30s) | — |
-| ~~Timeout na registration sequence~~ | ✅ Implementado (10s/request) | — |
-| ~~Command ACK (`/id-in/uxv/ack`)~~ | ✅ Implementado | — |
-| ~~Configurable telemetry rate (`setTelemetryRate`)~~ | ✅ Implementado | — |
-| ~~Estado do drone na UI~~ | ✅ Implementado (droneStateField) | — |
-| Protocol selector UI | `DuvopsView` (spinner/dropdown) | **Média** — actualmente hardcoded WebSocket/8180 |
-| `MqttProtocolClient` | `network/MqttProtocolClient.java` | Depois CSE e WebSocket validados |
-| `HttpProtocolClient` | `network/HttpProtocolClient.java` | Depois MQTT |
-| `CoApProtocolClient` | `network/CoApProtocolClient.java` | Depois HTTP (lib californium) |
-| Validar campo `nu` na subscrição | `OneM2MSession.createSubscription()` | Ao testar no device com CSE real |
+| `MqttProtocolClient` | `network/MqttProtocolClient.java` | Lib: Paho `org.eclipse.paho.client.mqttv3:1.2.5`; `poa=["mqtt://host:1883"]` no AE |
+| `HttpProtocolClient` | `network/HttpProtocolClient.java` | OkHttp REST POST + servidor HTTP embebido para notificações push |
+| `CoApProtocolClient` | `network/CoApProtocolClient.java` | Lib: Californium `org.eclipse.californium:californium-core:3.x` |
+| Protocol selector UI | `DuvopsView.java` (spinner) | Substituir `new NetworkManager(session)` pelo transport seleccionado |
 
 ---
 
@@ -304,11 +309,11 @@ o mesmo originator em `associatedConnections`, reutiliza-a.
 | `setSessionListener(SessionListener)` | Callback de estados intermédios → statusField |
 | `setTelemetryRateListener(l)` | Callback para `setTelemetryRate` → TelemetryManager |
 | `connect(host, port, aeId)` | Computa originator, inicia sequência de 6 passos |
-| `sendTelemetry(json)` | Envolve em m2m:cin, envia para `/id-in/uxv/telemetry` |
-| `dispatchCommand(json)` | Parseia comando, despacha, envia ACK a `/id-in/uxv/ack` |
+| `sendTelemetry(json)` | Envolve em m2m:cin, envia para `cse-in/uxv/telemetry` |
+| `dispatchCommand(json)` | Parseia comando, despacha, envia ACK a `cse-in/uxv/ack` |
 | `sendCommandAck(...)` | CIN com `{command, seq_cmd, t_cmd_ms, t_recv_ms, t_exec_ms}` |
 | `shutdown()` | Cancela reconnect, para scheduler, desliga transport |
-| `CSE_BASE = "/id-in"` | Path base do CSE (deve corresponder ao cseID em acme.ini) |
+| `CSE_BASE = "cse-in"` | Path base do CSE — sem slash inicial (flat JSON `to` field) |
 | `AE_NAME = "uxv"` | Nome do recurso AE |
 
 ### NetworkManager (implements ProtocolClient)

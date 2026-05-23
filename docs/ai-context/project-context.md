@@ -29,14 +29,15 @@ The system has three layers:
 
 ## Protocols Under Test
 
-Each protocol is tested independently against the same CSE:
+Each protocol is tested independently against the same CSE.
+Both endpoints (Android AE and Streamlit client) must use the same protocol per run.
 
-| Protocol | Port | OneM2M binding | Status |
-|---|---|---|---|
-| WebSocket | 8180 | Persistent connection, flat JSON, `oneM2M.json` subprotocol | ✅ Implemented + verified |
-| MQTT | 1883 | AE client → Mosquitto broker → CSE MQTT client | 🔜 Next |
-| HTTP | 8080 | REST POST/GET, OneM2M content types | 🔜 After MQTT |
-| CoAP | 5683/udp | UDP, Confirmable messages | 🔜 After HTTP |
+| Protocol | Port | OneM2M binding | Streamlit | Android |
+|---|---|---|---|---|
+| WebSocket | 8180 | Persistent connection, flat JSON, `oneM2M.json` subprotocol | ✅ | ✅ |
+| MQTT | 1883 | AE client → Mosquitto broker → CSE MQTT client | ✅ | 🔜 |
+| HTTP | 8080 | REST POST/GET, OneM2M content types | ✅ | 🔜 |
+| CoAP | 5683/udp | UDP, Confirmable messages | ✅ | 🔜 |
 
 ---
 
@@ -56,15 +57,16 @@ For each protocol × scenario combination:
 ## Directory Roles
 
 ```
-src/android/   ⭐ COMPLETE — Android app on DJI RC. Full OneM2M AE (WebSocket).
-               Kotlin, DJI SDK v4. Tested against ACME CSE v2025.11.
+src/android/   ⭐ WebSocket COMPLETE — Android app on DJI RC. Full OneM2M AE (WebSocket).
+               Java, DJI SDK v4. Tested against ACME CSE v2025.11.
+               🔜 MQTT / HTTP / CoAP transport clients pending (ProtocolClient interface ready).
 
 src/cse/       ⭐ COMPLETE — ACME CSE v2025.11 in Docker Compose.
                HTTP :8080, WebSocket :8180, CoAP :5683/udp + Mosquitto :1883.
                Verified working (9/9 end-to-end test steps passing).
 
-src/frontend/  🔜 NOT BUILT — Streamlit benchmark orchestrator + data logging.
-               Needs: protocol clients, CSV logger, benchmark runner, UI.
+src/frontend/  ⭐ COMPLETE — Streamlit benchmark orchestrator + data logging.
+               All 4 protocol clients (WS, MQTT, HTTP, CoAP), CSV logger, benchmark runner, UI.
 
 src/analysis/  🔜 NOT BUILT — Analysis scripts and Jupyter notebooks.
                Needs: data loading, statistics, publication-quality figures.
@@ -109,17 +111,18 @@ the CSE IP via a field in the main screen.
 
 ---
 
-## Current State (as of 2026-05-21)
+## Current State (as of 2026-05-23)
 
 ### Completed and verified
 
-- **Android app** (`src/android/`) — full OneM2M AE for WebSocket:
+- **Android app** (`src/android/`) — full OneM2M AE, WebSocket transport:
   - AE registration, 4 containers, subscription, ACK container
-  - Telemetry: 22 fields at configurable rate (250ms default), `seq` + `t_send_ms`
-  - Commands: 17 flight commands + `setTelemetryRate` benchmark control
+  - Telemetry: 22+ fields at configurable rate (250ms default), `seq` + `t_send_ms`
+  - Commands: 18 flight commands + `setTelemetryRate` benchmark control
   - Command ACK: `{command, seq_cmd, t_cmd_ms, t_recv_ms, t_exec_ms}`
   - Reconnect backoff (1s→30s), request timeout (10s)
   - Tested: 9/9 flow test steps passing against real ACME CSE
+  - `ProtocolClient` interface ready for MQTT/HTTP/CoAP transports
 
 - **CSE** (`src/cse/`) — Docker Compose with ACME CSE v2025.11:
   - All 4 protocols active (HTTP, WebSocket, MQTT, CoAP)
@@ -127,13 +130,22 @@ the CSE IP via a field in the main screen.
   - `enableACPChecks=false` (no ACP auto-created for AEs in v2025.11)
   - Test scripts in `src/cse/test_*.py`
 
+- **Streamlit frontend** (`src/frontend/`) — benchmark orchestrator:
+  - All 4 protocol clients (WS, MQTT, HTTP, CoAP) implemented and tested
+  - Scenario 1 (telemetry stream) and Scenario 2 (command burst) runners
+  - CSV logger with sidecar JSON; results viewer with plots
+  - Metrics: `latency_ms`, `cin_create_ms`, `payload_bytes`, `header_bytes`, `delivered`, `seq`
+
 ### Remaining (priority order for June 6)
 
-1. `src/frontend/` — Streamlit orchestrator (BLOCKING for data collection)
-2. MQTT protocol client in Android (`MqttProtocolClient.java`)
-3. Benchmark runs: WebSocket + MQTT, Scenarios 1 & 2, 30 runs each
-4. `src/analysis/` — statistics + figures
-5. HTTP + CoAP clients (stretch goal for June 6)
+1. **Android MQTT client** (`MqttProtocolClient.java`) — Paho library, AE reg + CIN + SUB + ACK
+2. **Android HTTP client** (`HttpProtocolClient.java`) — OkHttp REST + embedded callback server
+3. **Android CoAP client** (`CoApProtocolClient.java`) — Californium library
+4. **Android protocol selector UI** — spinner in `DuvopsView` to switch transport at runtime
+5. End-to-end integration test with all 4 protocols
+6. Benchmark runs: all 4 protocols, Scenarios 1 & 2, ≥30 runs each
+7. `src/analysis/` — statistics + figures
+8. Paper writing
 
 ---
 
