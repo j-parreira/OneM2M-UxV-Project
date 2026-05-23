@@ -196,6 +196,66 @@ connect(host, 8180, serialNumber)
 
 ---
 
+## Implementação por Protocolo — Notas de Transporte
+
+Para todos os protocolos, o originator é sempre `"C" + serialNumber` (max 32 chars).
+A `OneM2MSession` não muda — só o transport concreto é substituído.
+
+### WebSocket — `NetworkManager.java` (✅ COMPLETO)
+
+```
+Ligação: ws://cse_ip:8180, subprotocolo "oneM2M.json", header X-M2M-Origin: C<serial>
+AE poa:  ["ws://cse_ip:8180"]
+Notificações: CSE reutiliza a ligação WS activa (mesmo originator em associatedConnections)
+```
+
+### MQTT — `MqttProtocolClient.java` (🔜 a implementar)
+
+```
+Ligação: MQTT broker em cse_ip:1883, clientId = originator (ex: C3LKFD12ABC)
+AE poa:  ["mqtt://cse_ip:1883"]
+CIN send: publish para /oneM2M/req/C<serial>/id-in/json (QoS 1, retained=false)
+Notificações: subscribe em /oneM2M/req/id-in/C<serial>/json (broker → AE)
+```
+
+Dependência: `org.eclipse.paho:org.eclipse.paho.client.mqttv3:1.2.5`
+
+### HTTP — `HttpProtocolClient.java` (🔜 a implementar)
+
+```
+CIN send: OkHttp POST para http://cse_ip:8080/cse-in/uxv/telemetry
+          Headers: X-M2M-Origin, X-M2M-RI, X-M2M-RVI=3, Content-Type: application/json;ty=4
+AE poa:  ["http://rc_ip:callback_port"]   ← IP do RC na LAN, porta livre
+Notificações: Android expõe servidor HTTP embebido (porta callback_port)
+              CSE faz POST para http://rc_ip:callback_port com o m2m:sgn
+              Android ACK: HTTP 200 OK
+```
+
+> **Reachability:** O contentor Docker do CSE deve conseguir atingir o IP do RC na LAN.
+> O `rc_ip` é o IP do RC no WiFi — configurado na UI, não hardcoded.
+> O `callback_port` é uma porta aleatória livre escolhida na ligação.
+
+Dependência: OkHttp (já presente como dep do DJI SDK)
+
+### CoAP — `CoApProtocolClient.java` (🔜 a implementar)
+
+```
+Ligação: UDP coap://cse_ip:5683 (sem DTLS — ACME CSE v2025.11 não suporta)
+CIN send: CoAP POST para coap://cse_ip:5683/cse-in/uxv/telemetry (Confirmable)
+          Options: Content-Format=application/json (50), Accept=application/json
+AE poa:  ["coap://rc_ip:callback_port"]
+Notificações: Android expõe servidor CoAP embebido (UDP, porta callback_port)
+              CSE faz CoAP PUT para coap://rc_ip:callback_port
+              Android ACK: CoAP 2.04 Changed
+```
+
+> **Reachability:** Mesmo constraint que HTTP — CSE container deve atingir IP do RC.
+> CoAP usa UDP — verificar que a LAN não bloqueia UDP entre container e RC.
+
+Dependência: `org.eclipse.californium:californium-core:3.x`
+
+---
+
 ## ACME CSE v2025.11 — WebSocket Integration Findings
 
 Descobertos por testes end-to-end contra o CSE real. **Todos verificados empiricamente.**
@@ -424,9 +484,6 @@ o mesmo originator em `associatedConnections`, reutiliza-a.
 
 | Issue | Workaround |
 |---|---|
-| Video feed morre após 500 ms no simulator | Testar apenas no device físico |
-| Virtual sticks derivam em missões longas | PID tuning a cada 200 ms (não mais rápido) |
-| Zoom indisponível em modo IR | Verificar stream antes do comando zoom |
 | Video feed morre após 500 ms no simulator | Testar apenas no device físico |
 | Virtual sticks derivam em missões longas | PID tuning a cada 200 ms (não mais rápido) |
 | Zoom indisponível em modo IR | Verificar stream antes do comando zoom |

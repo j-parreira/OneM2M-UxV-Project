@@ -16,13 +16,13 @@ See `docs/ai-context/project-context.md` for full system context before starting
 
 ## Sub-project Map
 
-| Directory        | Stack              | Entry Point                        |
-|-----------------|--------------------|------------------------------------|
-| `src/android/`  | Kotlin, DJI SDK v4 | Android Studio project             |
-| `src/frontend/` | Python, Streamlit  | `python -m streamlit run app.py`   |
-| `src/cse/`      | Docker, ACME CSE   | `docker compose up`                |
-| `src/analysis/` | Python             | Scripts in `scripts/`, notebooks in `notebooks/` |
-| `docs/`         | Markdown           | Reference only, do not auto-generate |
+| Directory        | Stack              | Entry Point                                      | Status |
+|-----------------|--------------------|-------------------------------------------------|--------|
+| `src/android/`  | Java, DJI SDK v4   | Android Studio project                          | ⚠️ WebSocket complete; MQTT/HTTP/CoAP pending |
+| `src/frontend/` | Python, Streamlit  | `python -m streamlit run app.py`                | ✅ All 4 protocols complete |
+| `src/cse/`      | Docker, ACME CSE   | `docker compose up`                             | ✅ Complete |
+| `src/analysis/` | Python             | Scripts in `scripts/`, notebooks in `notebooks/` | 🔜 Not started |
+| `docs/`         | Markdown           | Reference only, do not auto-generate            | — |
 
 ---
 
@@ -47,7 +47,7 @@ Always use `python -m pip install` inside the relevant activated environment.
 | Protocol  | Port | Transport |
 |-----------|------|-----------|
 | MQTT      | 1883 | TCP       |
-| WebSocket | 80   | TCP       |
+| WebSocket | 8180 | TCP       |
 | HTTP      | 8080 | TCP       |
 | CoAP      | 5683 | UDP       |
 
@@ -57,8 +57,8 @@ Always use `python -m pip install` inside the relevant activated environment.
 
 - **Raw data** → `data/raw/` — never modify these files
 - **Processed data** → `data/processed/`
-- **Filename format:** `<protocol>_<scenario>_<YYYYMMDD>_run<N>.csv`
-  - Example: `mqtt_latency_20260520_run1.csv`
+- **Filename format:** `<protocol>_s<scenario>_<YYYYMMDD>_run<NNN>.csv`
+  - Example: `mqtt_s1_20260520_run001.csv`
 - Files >10 MB must be in `.gitignore` — do not commit large datasets
 
 ---
@@ -72,8 +72,8 @@ Always use `python -m pip install` inside the relevant activated environment.
 - Random seeds must be logged and documented in the script header
 - Each script: file-level docstring, function docstrings (description + params + returns)
 
-### Kotlin (Android)
-- Standard Android/Kotlin conventions, camelCase methods
+### Java (Android)
+- Standard Android/Java conventions, camelCase methods
 - DJI SDK v4 API calls must handle `DJISDKRegisteredCallback` before any operation
 - Never hardcode DJI API key — use `local.properties` (git-ignored)
 
@@ -82,6 +82,118 @@ Always use `python -m pip install` inside the relevant activated environment.
 - Separate data loading from analysis (different cells)
 - Preserve all output cells with results and plots
 - Do not reorganise cells without confirming first
+
+---
+
+## Data Flow and Measurement Points
+
+Both Android and Streamlit must use the **same protocol** per benchmark run. The CSE resource
+tree is identical regardless of protocol — only the transport binding changes.
+
+### Scenario 1 — Telemetry stream (Android → CSE → Streamlit)
+
+```
+Android RC (DJI RC)                  ACME CSE                  Dev machine (Streamlit)
+     │                                   │                               │
+     │  CIN create (op=1, to=cse-in/     │                               │
+     │  uxv/telemetry, t_send_ms=T)      │                               │
+     ├──────────────────────────────────►│                               │
+     │  ◄─── rsc=2001 ───────────────────┤                               │
+     │                                   │  SUB notification (m2m:sgn)   │
+     │                                   ├──────────────────────────────►│ timestamp_ms = T_recv
+     │                                   │  ◄── ACK (rsc=2000) ──────────┤
+```
+
+**Metric captured per CIN:**
+- `latency_ms = timestamp_ms − t_send_ms` (NTP-dependent: two clocks)
+- `payload_bytes` = JSON payload size; `header_bytes` = protocol framing
+- `delivered = True` when CIN received; gaps in `seq` = packet loss
+- `cin_create_ms = None` (no command from Streamlit in S1)
+
+### Scenario 2 — Command burst (Streamlit → CSE → Android → ACK → Streamlit)
+
+```
+Dev machine (Streamlit)              ACME CSE                  Android RC (DJI RC)
+     │                                   │                               │
+     │  t_cmd_ms = now()                 │                               │
+     │  CIN create (to=cse-in/uxv/       │                               │
+     │  commands)                        │                               │
+     ├──────────────────────────────────►│                               │
+     │  ◄─── rsc=2001 ───────────────────┤  cin_create_ms = RTT          │
+     │                                   │  SUB notification             │
+     │                                   ├──────────────────────────────►│ t_recv_ms = now()
+     │                                   │  ◄── ACK ─────────────────────┤ (dispatch command)
+     │                                   │  ACK CIN (to=cse-in/uxv/ack)  │ t_exec_ms = now()
+     │                                   │◄──────────────────────────────┤
+     │  SUB notification (ACK content)   │                               │
+     │◄──────────────────────────────────┤                               │
+```
+
+**Metrics captured per command:**
+- `cin_create_ms` = Streamlit→CSE round-trip (monotonic, single-device, no NTP dependency)
+- `latency_ms = t_recv_ms − t_cmd_ms` (NTP-dependent: two clocks)
+- `t_exec_ms` = `System.currentTimeMillis()` after Android dispatches command (dispatch overhead)
+- `delivered = True` when ACK arrives within 10 s timeout
+
+---
+
+## Metrics Reference
+
+All metrics are captured in `MetricRecord` (see `src/frontend/core/logger.py`). One row per
+message (telemetry CIN in S1, command+ACK pair in S2).
+
+| Field | Type | Description | NTP-dep? |
+|---|---|---|---|
+| `timestamp_ms` | int | Streamlit wall-clock at receive time | — |
+| `latency_ms` | float\|None | S1: `timestamp_ms−t_send_ms`; S2: `t_recv_ms−t_cmd_ms` | **Yes** |
+| `cin_create_ms` | float\|None | S2 only: Streamlit→CSE CIN round-trip (monotonic) | No |
+| `t_cmd_ms` | int\|None | S2: Streamlit wall-clock when command was sent | — |
+| `t_recv_ms` | int\|None | S2: Android wall-clock when command was received | — |
+| `t_exec_ms` | int\|None | S2: Android wall-clock after command dispatched | — |
+| `t_send_ms` | int\|None | S1: Android wall-clock when telemetry CIN was sent | — |
+| `seq` | int | Monotonic counter from Android; gaps → packet loss | — |
+| `payload_bytes` | int | Bytes in the OneM2M `con` field | — |
+| `header_bytes` | int | Protocol framing overhead (WS frame / MQTT topic+header / HTTP headers / CoAP header) | — |
+| `delivered` | bool | True if message received within timeout | — |
+
+**Derived paper metrics:**
+- **Latency** = mean/median/p95 of `latency_ms` per protocol (note NTP caveat in paper)
+- **Throughput** = `n_delivered / duration_s` (S1) or `n_commands / total_time_s` (S2)
+- **Packet loss** = gaps in `seq` counter (S1); `1 − n_delivered/n_commands` (S2)
+- **Protocol overhead** = `header_bytes / (header_bytes + payload_bytes) × 100`
+- **Jitter** = std dev of `latency_ms` within a run
+
+---
+
+## CSE Resource Tree
+
+The same OneM2M resource tree is used for **all 4 protocols** — no per-protocol changes:
+
+```
+/id-in               ← CSE-Base identifier (used only in AE registration `to` field)
+/cse-in/uxv          ← AE resource (registered by Android on connect)
+/cse-in/uxv/telemetry   ← CNT mni=10  — Android pushes telemetry CINs here
+/cse-in/uxv/commands    ← CNT mni=5   — Streamlit pushes command CINs here
+/cse-in/uxv/commands/sub-commands  ← SUB — notifies Android when new command arrives
+/cse-in/uxv/ack         ← CNT mni=200 — Android pushes ACK CINs here (Scenario 2)
+```
+
+Streamlit subscribes to `telemetry` (S1) and `ack` (S2); Android subscribes to `commands`.
+Subscription notification target (`nu`) = AE originator (`C<serial>` for Android,
+`CStreamlit` for Streamlit).
+
+### Per-protocol notification delivery
+
+| Protocol | Notification mechanism | Android `poa` in AE registration |
+|---|---|---|
+| WebSocket | CSE reuses active WS connection (same originator in `associatedConnections`) | `["ws://cse_ip:8180"]` |
+| MQTT | CSE publishes to `/oneM2M/req/id-in/{originator}/json`; AE subscribes | `["mqtt://cse_ip:1883"]` |
+| HTTP | CSE POSTs to Android's callback URL; **Android must embed HTTP server** | `["http://rc_ip:callback_port"]` |
+| CoAP | CSE sends CoAP PUT to Android's callback; **Android must embed CoAP server** | `["coap://rc_ip:callback_port"]` |
+
+> **HTTP/CoAP reachability:** The CSE Docker container must be able to reach the Android RC's
+> LAN IP. Both must be on the same WiFi network. The `rc_ip` and `callback_port` are
+> configured at runtime (not hardcoded).
 
 ---
 
