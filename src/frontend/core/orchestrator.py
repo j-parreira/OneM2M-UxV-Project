@@ -249,8 +249,8 @@ def _run_scenario_2(
     records: list[MetricRecord] = []
     n_delivered = 0
 
-    # Rotating command set to avoid state conflicts.
-    _COMMANDS = ["takeoff", "land", "hover", "setZoom"]
+    # State-independent commands — safe to rotate without drone state knowledge.
+    _COMMANDS = ["identify", "gimbalReset", "setZoom", "setCameraMode"]
 
     ack_queue: queue.Queue = queue.Queue()
 

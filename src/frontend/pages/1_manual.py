@@ -5,6 +5,7 @@ Connects to the CSE using the selected protocol, dispatches commands, and
 subscribes to telemetry/ACK notifications for live display.
 """
 import json
+import math
 import queue
 import threading
 import time
@@ -107,8 +108,8 @@ client: Optional = st.session_state.manual_client
 CMD_BUTTONS = [
     ("Takeoff", "takeoff"),
     ("Land", "land"),
-    ("Hover", "hover"),
-    ("RTH", "returnToHome"),
+    ("Identify", "identify"),
+    ("RTH", "startGoHome"),
 ]
 
 cols = st.columns(len(CMD_BUTTONS) + 1)
@@ -175,17 +176,22 @@ if latest_tel:
     tel_col1, tel_col2, tel_col3, tel_col4 = tel_placeholder.columns(4)
     with tel_col1:
         lat = latest_tel.get("lat", "—")
-        lon = latest_tel.get("lon", "—")
-        st.metric("GPS", f"{lat}, {lon}")
+        lng = latest_tel.get("lng", "—")
+        st.metric("GPS", f"{lat}, {lng}")
     with tel_col2:
-        alt = latest_tel.get("altitude", "—")
+        alt = latest_tel.get("alt", "—")
         st.metric("Altitude", f"{alt} m" if alt != "—" else "—")
     with tel_col3:
-        bat = latest_tel.get("battery", "—")
+        bat_obj = latest_tel.get("bat", {})
+        bat = bat_obj.get("lvl", "—") if isinstance(bat_obj, dict) else "—"
         st.metric("Battery", f"{bat}%" if bat != "—" else "—")
     with tel_col4:
-        spd = latest_tel.get("speed", "—")
-        st.metric("Speed", f"{spd} m/s" if spd != "—" else "—")
+        vel_x = latest_tel.get("velX")
+        vel_y = latest_tel.get("velY")
+        if vel_x is not None and vel_y is not None:
+            st.metric("Speed", f"{math.hypot(vel_x, vel_y):.1f} m/s")
+        else:
+            st.metric("Speed", "—")
 else:
     tel_placeholder.info("No telemetry yet — connect and ensure the drone is active.")
 

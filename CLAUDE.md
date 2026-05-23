@@ -115,8 +115,10 @@ See `docs/adr/` for full records. Key decisions:
 When running the full system:
 
 1. `docker compose up` from `src/cse/` — wait for CSE to be healthy on :8080
-2. `streamlit run app.py` from `src/frontend/` (with venv active)
-3. Launch Android app on DJI RC — it registers as AE on the CSE at startup
+2. Launch Android app on DJI RC — it registers as AE and creates the resource containers
+   (`cse-in/uxv/telemetry`, `cse-in/uxv/commands`, `cse-in/uxv/ack`)
+3. `streamlit run app.py` from `src/frontend/` (with venv active) — must start AFTER Android,
+   because Streamlit's `_ensure_subscription` needs the containers to already exist
 4. Drone must be powered on before DJI SDK commands are issued
 
 The Android app is configured with the CSE IP via a settings screen — no hardcoded IP.
