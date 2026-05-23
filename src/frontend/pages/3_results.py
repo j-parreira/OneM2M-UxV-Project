@@ -81,16 +81,23 @@ st.caption(f"Showing {len(df)} records from {df['run_id'].nunique()} run(s)")
 
 st.subheader("Run Summary")
 
+has_cin = "cin_create_ms" in df.columns
+
+summary_agg = {
+    "n_total": ("seq", "count"),
+    "n_delivered": ("delivered", "sum"),
+    "mean_latency_ms": ("latency_ms", "mean"),
+    "p95_latency_ms": ("latency_ms", lambda x: x.quantile(0.95)),
+    "mean_payload_bytes": ("payload_bytes", "mean"),
+    "mean_header_bytes": ("header_bytes", "mean"),
+}
+if has_cin:
+    # cin_create_ms only has values for Scenario 2 command rows — mean over those.
+    summary_agg["mean_cin_create_ms"] = ("cin_create_ms", "mean")
+
 summary = (
     df.groupby(["run_id", "protocol", "scenario"])
-    .agg(
-        n_total=("seq", "count"),
-        n_delivered=("delivered", "sum"),
-        mean_latency_ms=("latency_ms", "mean"),
-        p95_latency_ms=("latency_ms", lambda x: x.quantile(0.95)),
-        mean_payload_bytes=("payload_bytes", "mean"),
-        mean_header_bytes=("header_bytes", "mean"),
-    )
+    .agg(**summary_agg)
     .reset_index()
 )
 summary["loss_pct"] = (1 - summary["n_delivered"] / summary["n_total"].clip(lower=1)) * 100
@@ -100,16 +107,18 @@ summary["overhead_pct"] = (
     * 100
 )
 
-st.dataframe(
-    summary.round(2),
-    use_container_width=True,
-    column_config={
-        "mean_latency_ms": st.column_config.NumberColumn("Mean latency (ms)", format="%.1f"),
-        "p95_latency_ms": st.column_config.NumberColumn("p95 latency (ms)", format="%.1f"),
-        "loss_pct": st.column_config.NumberColumn("Loss (%)", format="%.1f"),
-        "overhead_pct": st.column_config.NumberColumn("Overhead (%)", format="%.1f"),
-    },
-)
+col_cfg = {
+    "mean_latency_ms": st.column_config.NumberColumn("Mean latency (ms)", format="%.1f"),
+    "p95_latency_ms": st.column_config.NumberColumn("p95 latency (ms)", format="%.1f"),
+    "loss_pct": st.column_config.NumberColumn("Loss (%)", format="%.1f"),
+    "overhead_pct": st.column_config.NumberColumn("Overhead (%)", format="%.1f"),
+}
+if has_cin:
+    col_cfg["mean_cin_create_ms"] = st.column_config.NumberColumn(
+        "Mean CIN create (ms)", format="%.1f"
+    )
+
+st.dataframe(summary.round(2), use_container_width=True, column_config=col_cfg)
 
 # ------------------------------------------------------------------
 # Quick plots
@@ -138,6 +147,24 @@ if df["latency_ms"].notna().any():
         labels={"latency_ms": "Latency (ms)"},
     )
     st.plotly_chart(fig2, use_container_width=True)
+
+# CIN creation round-trip — Scenario 2 only (Streamlit → CSE overhead).
+if has_cin and df["cin_create_ms"].notna().any():
+    st.subheader("CIN Creation Round-trip (Streamlit → CSE)")
+    st.caption(
+        "Time from `send_command()` call to CSE response — measures protocol + CSE overhead, "
+        "independent of Android reachability."
+    )
+    fig3 = px.box(
+        df[df["cin_create_ms"].notna()],
+        x="protocol",
+        y="cin_create_ms",
+        color="protocol",
+        labels={"cin_create_ms": "CIN create (ms)", "protocol": "Protocol"},
+        points="outliers",
+    )
+    fig3.update_layout(showlegend=False)
+    st.plotly_chart(fig3, use_container_width=True)
 
 # ------------------------------------------------------------------
 # Sidecar metadata viewer

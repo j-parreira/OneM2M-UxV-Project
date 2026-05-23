@@ -40,13 +40,16 @@ class MetricRecord:
     t_cmd_ms: Optional[int]     # Streamlit send time — Scenario 2 downlink
     t_recv_ms: Optional[int]    # Android receive time — Scenario 2 ACK (different clock: NTP-dep.)
     t_exec_ms: Optional[int]    # Android execute time — Scenario 2 ACK
+    # CIN creation round-trip (Streamlit → CSE → response); excludes end-to-end Android delivery.
+    # Set for every command attempt (sent or not), None for Scenario 1 telemetry rows.
+    cin_create_ms: Optional[float]
 
 
 # Column order matches docs/ai-context/decisions.md "Raw telemetry CSV columns".
 _CSV_COLUMNS = [
     "timestamp_ms", "run_id", "protocol", "scenario", "direction",
     "latency_ms", "payload_bytes", "header_bytes", "delivered", "seq",
-    "t_send_ms", "t_cmd_ms", "t_recv_ms", "t_exec_ms",
+    "t_send_ms", "t_cmd_ms", "t_recv_ms", "t_exec_ms", "cin_create_ms",
 ]
 
 

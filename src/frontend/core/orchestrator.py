@@ -132,7 +132,8 @@ def run(
         records=records,
         csv_path=str(csv_path),
         n_delivered=n_delivered,
-        n_total=len(records),
+        # Use the expected message count (not received) so loss % is meaningful.
+        n_total=n_total,
         mean_latency_ms=mean_lat,
     )
 
@@ -213,6 +214,7 @@ def _run_scenario_1(
                 t_cmd_ms=None,
                 t_recv_ms=None,
                 t_exec_ms=None,
+                cin_create_ms=None,  # telemetry rows: no command sent from Streamlit
             )
             with lock:
                 records.append(rec)
@@ -281,7 +283,7 @@ def _run_scenario_2(
             timestamp_ms = time.time_ns() // 1_000_000
 
             if not send_ok:
-                # CIN creation failed — record as undelivered.
+                # CIN creation failed — record as undelivered; no ACK possible.
                 rec = MetricRecord(
                     timestamp_ms=timestamp_ms,
                     run_id=run_cfg.run_id,
@@ -297,10 +299,14 @@ def _run_scenario_2(
                     t_cmd_ms=t_cmd_ms,
                     t_recv_ms=None,
                     t_exec_ms=None,
+                    cin_create_ms=None,  # failed — no round-trip time available
                 )
                 with lock:
                     records.append(rec)
                 continue
+
+            # CIN creation succeeded: record the Streamlit→CSE round-trip separately.
+            cin_create_ms: Optional[float] = send_latency_ms
 
             # Wait for ACK from Android (delivered via subscription).
             ack_timeout_s = 10.0
@@ -312,16 +318,18 @@ def _run_scenario_2(
             if ack_con and ack_con.get("seq_cmd") == seq_cmd:
                 t_recv_ms = ack_con.get("t_recv_ms")
                 t_exec_ms = ack_con.get("t_exec_ms")
-                # Latency: device-to-device, both clocks NTP-synced on same LAN.
-                latency_ms = (
-                    (t_recv_ms - t_cmd_ms) if t_recv_ms is not None else send_latency_ms
+                # End-to-end latency: Android receive minus Streamlit send (NTP-dependent).
+                # Null when t_recv_ms not returned — do NOT fall back to cin_create_ms,
+                # which measures a different path (Streamlit→CSE only).
+                latency_ms: Optional[float] = (
+                    (t_recv_ms - t_cmd_ms) if t_recv_ms is not None else None
                 )
                 delivered = True
                 n_delivered += 1
             else:
                 t_recv_ms = None
                 t_exec_ms = None
-                latency_ms = None
+                latency_ms = None   # ACK timeout — no end-to-end measurement
                 delivered = False
 
             rec = MetricRecord(
@@ -339,6 +347,7 @@ def _run_scenario_2(
                 t_cmd_ms=t_cmd_ms,
                 t_recv_ms=t_recv_ms,
                 t_exec_ms=t_exec_ms,
+                cin_create_ms=cin_create_ms,
             )
             with lock:
                 records.append(rec)
