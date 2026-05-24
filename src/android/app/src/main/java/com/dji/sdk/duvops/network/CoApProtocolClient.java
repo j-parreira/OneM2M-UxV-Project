@@ -5,24 +5,21 @@
  * Usa mensagens Confirmable (CON) para garantir entrega. Sem DTLS — ACME CSE
  * v2025.11 não suporta DTLS no binding CoAP.
  *
- * <h3>Mapeamento flat JSON → CoAP (oneM2M TS-0008 CoAP binding)</h3>
+ * <h3>Mapeamento flat JSON → CoAP</h3>
  * <pre>
- * Flat JSON field  → CoAP element
- * op=1 (CREATE)   → POST
+ * op=1 (CREATE)   → CoAP POST
  * to               → URI path: coap://host:5683/{to}
- * fr               → option 2048 (X-M2M-Origin), ou header no payload
- * rqi              → option 2053 (X-M2M-RI)
- * rvi              → option 2055 (X-M2M-RVI)
- * ty               → Content-Format option + URI query ty={ty}
- * pc               → CoAP payload (JSON)
- * rsc (response)   → option 2050 (X-M2M-RSC) na resposta CoAP
+ * body             → flat JSON completo (mesmo formato do WebSocket binding)
+ * rsc (resposta)   → mapeado do código de resposta CoAP (2.01→2001, 2.04→2004…)
+ *                    ou lido do body flat JSON se o CSE o incluir
  * </pre>
  *
- * <h3>Simplificação implementada</h3>
- * O ACME CSE v2025.11 aceita os campos oneM2M como JSON no payload (flat JSON
- * como no WebSocket) em vez de opções CoAP separadas. Esta implementação
- * embute todos os campos no payload JSON para maximizar a compatibilidade.
- * O rsc é lido da opção CoAP 2050 se presente, senão mapeado do código de resposta CoAP.
+ * <h3>Formato do payload</h3>
+ * O ACME CSE v2025.11 aceita flat JSON no payload CoAP (mesmos campos do binding
+ * WebSocket). Todos os campos oneM2M ({@code op, to, fr, rqi, rvi, ty, pc}) vão
+ * no body — sem query params nem opções CoAP separadas.
+ * O endpoint outgoing é partilhado ({@code sharedEndpoint}) para reutilizar o
+ * socket UDP entre requests consecutivos.
  *
  * <h3>Notificações push</h3>
  * O CSE envia PUT/POST CoAP para {@code coap://rcIp:callbackPort/notify} com
@@ -50,6 +47,7 @@ import org.eclipse.californium.core.server.resources.CoapExchange;
 import org.json.JSONException;
 import org.json.JSONObject;
 
+import java.io.IOException;
 import java.net.InetSocketAddress;
 
 /**
@@ -79,6 +77,8 @@ public class CoApProtocolClient implements ProtocolClient {
     // ── Estado ───────────────────────────────────────────────────────────────
 
     private CoapServer callbackServer;
+    /** Endpoint partilhado para pedidos CoAP outgoing — evita criar novo socket por request. */
+    private CoapEndpoint sharedEndpoint;
     private volatile boolean connected = false;
 
     private String savedHost;
@@ -131,8 +131,14 @@ public class CoApProtocolClient implements ProtocolClient {
                 .setInetSocketAddress(new InetSocketAddress("0.0.0.0", CALLBACK_PORT))
                 .build());
 
+        // Endpoint outgoing com porta efémera — partilhado por todos os pedidos
+        sharedEndpoint = new CoapEndpoint.Builder()
+                .setInetSocketAddress(new InetSocketAddress("0.0.0.0", 0))
+                .build();
+
         try {
             callbackServer.start();
+            sharedEndpoint.start();
             connected = true;
             Log.d(TAG, "CoAP ready — callback server on " + wifiIp + ":" + CALLBACK_PORT);
             listener.onConnectionStatusChange(true,
@@ -145,7 +151,7 @@ public class CoApProtocolClient implements ProtocolClient {
     }
 
     /**
-     * Para o servidor de callback CoAP.
+     * Para o servidor de callback CoAP e o endpoint outgoing.
      */
     @Override
     public void disconnect() {
@@ -154,59 +160,73 @@ public class CoApProtocolClient implements ProtocolClient {
             callbackServer.destroy();
             callbackServer = null;
         }
+        if (sharedEndpoint != null) {
+            sharedEndpoint.destroy();
+            sharedEndpoint = null;
+        }
     }
 
     /**
      * Envia um request oneM2M como POST CoAP CON ao CSE.
      *
-     * <p>Parseia o frame flat JSON de {@link OneM2MSession} para extrair os campos.
-     * O payload CoAP é o valor do campo {@code pc} (conteúdo do recurso).
-     * A resposta CoAP é convertida para flat JSON e entregue ao rawMessageListener.
+     * <p>O payload CoAP é o flat JSON completo (mesmo formato do WebSocket binding).
+     * O ACME CSE v2025.11 aceita flat JSON no body CoAP em vez de opções CoAP separadas.
+     * O endpoint outgoing é partilhado entre todos os pedidos (reutiliza o socket UDP).
      *
      * @param jsonPayload frame flat JSON oneM2M serializado
      */
     @Override
     public void sendTelemetry(String jsonPayload) {
-        if (!connected) return;
+        if (!connected || sharedEndpoint == null) return;
         try {
             JSONObject req = new JSONObject(jsonPayload);
             String to  = req.optString("to",  "");
-            String fr  = req.optString("fr",  "");
             String rqi = req.optString("rqi", "");
-            String rvi = req.optString("rvi", "3");
-            int    ty  = req.optInt("ty", 0);
-            JSONObject pc = req.optJSONObject("pc");
-            String bodyStr = (pc != null) ? pc.toString() : "{}";
 
-            // Construir URI CoAP: coap://host:port/{to}?X-M2M-Origin=fr&...
-            String uri = "coap://" + savedHost + ":" + savedPort + "/" + to
-                    + "?X-M2M-Origin=" + fr
-                    + "&X-M2M-RI=" + rqi
-                    + "&X-M2M-RVI=" + rvi;
-            if (ty > 0) uri += "&ty=" + ty;
+            // URI: path apenas (sem query params) — campos oneM2M vão no body flat JSON
+            String uri = "coap://" + savedHost + ":" + savedPort + "/" + to;
 
             CoapClient coapClient = new CoapClient(uri);
+            // Reutilizar endpoint partilhado — evita criar novo socket UDP por request
+            coapClient.setEndpoint(sharedEndpoint);
             coapClient.setTimeout(REQUEST_TIMEOUT_MS);
 
             final String rqiFinal = rqi;
-            // POST assíncrono CON (Confirmable) — handler chamado no thread Californium
+            // POST assíncrono CON (Confirmable) com o flat JSON completo como body
             coapClient.post(new CoapHandler() {
                 @Override
                 public void onLoad(CoapResponse response) {
                     try {
-                        // Mapear código de resposta CoAP para rsc oneM2M
-                        // 2.01 Created = rsc 2001; 2.04 Changed = rsc 2004; 4.05 Conflict = rsc 4105
-                        int rsc = mapCoapCodeToRsc(response.getCode());
-
-                        // Tentar ler resposta oneM2M do payload CoAP
                         String respBody = response.getResponseText();
-                        JSONObject flatResp = new JSONObject()
-                                .put("rsc", rsc)
-                                .put("rqi", rqiFinal);
+                        JSONObject flatResp;
                         if (respBody != null && !respBody.isEmpty()) {
                             try {
-                                flatResp.put("pc", new JSONObject(respBody));
-                            } catch (JSONException ignore) { }
+                                JSONObject parsed = new JSONObject(respBody);
+                                if (parsed.has("rsc")) {
+                                    // ACME CSE retornou flat JSON com rsc — usar directamente
+                                    if (!parsed.has("rqi")) parsed.put("rqi", rqiFinal);
+                                    flatResp = parsed;
+                                } else {
+                                    // Body é conteúdo do recurso — mapear código CoAP para rsc
+                                    int rsc = mapCoapCodeToRsc(response.getCode());
+                                    flatResp = new JSONObject()
+                                            .put("rsc", rsc)
+                                            .put("rqi", rqiFinal)
+                                            .put("pc", parsed);
+                                }
+                            } catch (JSONException e) {
+                                // Body não é JSON válido — mapear código CoAP
+                                int rsc = mapCoapCodeToRsc(response.getCode());
+                                flatResp = new JSONObject()
+                                        .put("rsc", rsc)
+                                        .put("rqi", rqiFinal);
+                            }
+                        } else {
+                            // Resposta sem body — mapear código CoAP para rsc
+                            int rsc = mapCoapCodeToRsc(response.getCode());
+                            flatResp = new JSONObject()
+                                    .put("rsc", rsc)
+                                    .put("rqi", rqiFinal);
                         }
 
                         if (rawMessageListener != null) {
@@ -222,7 +242,7 @@ public class CoApProtocolClient implements ProtocolClient {
                     Log.e(TAG, "CoAP request failed rqi=" + rqiFinal);
                     // Sem resposta → timeout de OneM2MSession vai disparar
                 }
-            }, bodyStr, CONTENT_FORMAT_JSON);
+            }, jsonPayload, CONTENT_FORMAT_JSON);
 
         } catch (JSONException e) {
             Log.e(TAG, "sendTelemetry parse: " + e.getMessage());

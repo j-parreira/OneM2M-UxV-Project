@@ -195,7 +195,7 @@ connect(host, 8180, serialNumber)
 |---|---|
 | End-to-end MQTT test | Testar registo AE + notificações vs ACME CSE real |
 | End-to-end HTTP test | Verificar callback reachability (Docker → RC WiFi IP) |
-| End-to-end CoAP test | CoAP URI query params vs CoAP options — pode precisar ajuste |
+| End-to-end CoAP test | Flat JSON body vs ACME CSE CoAP handler — verificar parsing |
 | Benchmark runs (S1, S2) | ≥30 runs × 4 protocolos |
 
 ---
@@ -224,6 +224,9 @@ Notificações: subscribe em /oneM2M/req/id-in/C<serial>/json (broker → AE)
 
 Dependência: `org.eclipse.paho:org.eclipse.paho.client.mqttv3:1.2.5`
 
+> **Timing:** `onConnectionStatusChange(true)` só é chamado após SUBACK confirmado — a
+> sequência de registo AE não arranca antes de os tópicos estarem activos no broker.
+
 ### HTTP — `HttpProtocolClient.java` (✅ COMPLETO)
 
 ```
@@ -243,17 +246,18 @@ Notificações: NanoHTTPD 2.3.1 na porta 8181
 
 ```
 CIN send: Californium 2.7.4 CON POST assíncrono para coap://cse_ip:5683/{to}
-          URI query params: X-M2M-Origin, X-M2M-RI, X-M2M-RVI, ty
+          Body: flat JSON completo (igual ao WS binding — sem URI query params)
           Content-Format: 50 (application/json)
+          sharedEndpoint (porta efémera) reutilizado entre requests — sem criar socket por send
 AE poa:  ["coap://rc_ip:5684"]   ← IP WiFi do RC, porta fixa 5684 (UDP)
 Notificações: CoapServer (Californium) na porta 5684 UDP, resource /notify
               CSE envia POST/PUT com {"m2m:sgn":{...}}
               ACK: CoAP 2.04 Changed (requiresExplicitNotifyAck = false)
 ```
 
-> **Nota:** URI query params para headers oneM2M pode necessitar ajuste após teste vs CSE real.
 > Californium 2.7.4 (Java 8) — não usar 3.x (requer Java 11).
 > CoAP usa UDP — verificar que a LAN não bloqueia UDP entre container e RC.
+> build.gradle: usar `org.nanohttpd:nanohttpd:2.3.1` (Maven Central) + excluir `META-INF/legal/**`.
 
 ---
 

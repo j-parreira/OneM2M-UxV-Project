@@ -61,6 +61,8 @@ android {
         doNotStrip "*/*/libDJISDKLOGJNI.so"
         exclude 'assets/location_map_gps_locked.png'
         exclude 'assets/location_map_gps_3d.png'
+        // Californium 2.7.4 ships duplicate META-INF/legal/* across its modules
+        exclude 'META-INF/legal/**'
     }
 
     compileOptions {
@@ -101,7 +103,8 @@ dependencies {
     // MQTT transport (Paho pure Java — no Android service wrapper needed)
     implementation 'org.eclipse.paho:org.eclipse.paho.client.mqttv3:1.2.5'
     // HTTP notification callback server (embedded, no extra Activity required)
-    implementation 'fi.iki.elonen:nanohttpd:2.3.1'
+    // fi.iki.elonen is the Java package name; Maven Central uses org.nanohttpd as group ID
+    implementation 'org.nanohttpd:nanohttpd:2.3.1'
     // CoAP transport — 2.7.4 required for Java 8 (Californium 3.x requires Java 11)
     implementation 'org.eclipse.californium:californium-core:2.7.4'
 

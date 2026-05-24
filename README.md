@@ -4,8 +4,8 @@
 
 This project benchmarks the **OneM2M** middleware framework for unmanned vehicle (UxV) operations
 across four communication protocols: **MQTT, WebSocket, HTTP, and CoAP**. The system runs on a
-DJI Mavic 2 Enterprise Advanced (M2EA) controlled by an Android-based DJI RC with the ACMECSE
-application. Results will be submitted as an IEEE/ACM conference paper.
+DJI Mavic 2 Enterprise Advanced (M2EA) controlled by an Android-based DJI RC. Deliverable:
+relatório académico para a cadeira **Mobilidade em Sistemas Computacionais** (IPL Leiria).
 
 ## System Architecture
 
@@ -31,7 +31,7 @@ application. Results will be submitted as an IEEE/ACM conference paper.
 
 | Directory        | Stack          | Purpose                                        |
 |-----------------|----------------|------------------------------------------------|
-| `src/android/`  | Kotlin, DJI SDK v4 | ACMECSE app running on the DJI RC controller |
+| `src/android/`  | Java, DJI SDK v4   | Android app running on the DJI RC controller  |
 | `src/frontend/` | Python, Streamlit  | Test dashboard — command dispatch & telemetry |
 | `src/cse/`      | Python, ACME CSE   | OneM2M CSE server configuration & deployment  |
 | `src/analysis/` | Python             | Metric collection, statistical analysis, plots |
@@ -41,10 +41,10 @@ application. Results will be submitted as an IEEE/ACM conference paper.
 
 | Protocol | Port | Transport | OneM2M Binding | Status |
 |---|---|---|---|---|
-| WebSocket | 8180 | TCP | Persistent; flat JSON; `oneM2M.json` subprotocol | ✅ Implemented |
-| MQTT | 1883 | TCP | AE client → Mosquitto broker → CSE MQTT client | 🔜 Next |
-| HTTP | 8080 | TCP | RESTful resources; `/cse-in/...` paths | 🔜 Planned |
-| CoAP | 5683 | UDP | Confirmable messages; DTLS not used in v2025.11 | 🔜 Planned |
+| WebSocket | 8180 | TCP | Persistent; flat JSON; `oneM2M.json` subprotocol | ✅ Both endpoints |
+| MQTT | 1883 | TCP | AE client → Mosquitto broker → CSE MQTT client | ✅ Both endpoints |
+| HTTP | 8080 | TCP | RESTful POST; `/cse-in/...` paths; embedded callback | ✅ Both endpoints |
+| CoAP | 5683 | UDP | CON POST; flat JSON body; embedded callback server | ✅ Both endpoints |
 
 ## Performance Metrics
 
@@ -140,19 +140,21 @@ Open `src/android/` in Android Studio. Requires DJI SDK v4 and a valid DJI devel
 
 | Component | Status | Notes |
 |---|---|---|
-| `src/android/` | ✅ Complete | WebSocket OneM2M AE, tested against real CSE (9/9 flow tests) |
-| `src/cse/` | ✅ Complete | All 4 protocols active; v2025.11 integration verified |
-| `src/frontend/` | 🔜 Not built | Streamlit benchmark orchestrator — next priority |
-| `src/analysis/` | 🔜 Not built | Analysis pipeline — after data collection |
+| `src/android/` | ✅ Complete | All 4 transports (WS/MQTT/HTTP/CoAP); protocol selector spinner; compile + build passing |
+| `src/cse/` | ✅ Complete | All 4 protocols active; ACME CSE v2025.11 integration verified |
+| `src/frontend/` | ✅ Complete | All 4 protocol clients; Scenario 1 & 2 runners; CSV logger; results viewer |
+| `src/analysis/` | 🔜 Not built | Analysis pipeline — after benchmark data collection |
 
-**Deadline:** 2026-06-06 (course paper, Mobilidade em Sistemas Computacionais)
+**Next step:** end-to-end integration test (all 4 protocols vs real CSE), then benchmark runs (≥30 runs × 4 protocols × 2 scenarios).
+
+**Deadline:** 2026-06-06 (relatório académico, Mobilidade em Sistemas Computacionais)
 
 ## Academic Context
 
 - **Institution:** Instituto Politécnico de Leiria (IPL)
 - **Programme:** Mestrado em Engenharia Informática
-- **Target venue:** IEEE/ACM international conference (TBD)
-- **Paper language:** English
+- **Deliverable:** Relatório académico — cadeira Mobilidade em Sistemas Computacionais
+- **Language:** Portuguese (report) / English (possible future conference paper)
 
 ## License
 

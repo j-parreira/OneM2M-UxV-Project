@@ -171,19 +171,36 @@ public class MqttProtocolClient implements ProtocolClient {
             mqttClient.connect(opts, null, new IMqttActionListener() {
                 @Override
                 public void onSuccess(IMqttToken asyncActionToken) {
-                    // Subscribir antes de notificar OneM2MSession — garante que as respostas
-                    // à sequência de registo AE chegam antes de tentar processar
+                    // Subscribir com callback — só notificar OneM2MSession quando o broker
+                    // confirmar a subscrição (SUBACK). Sem esperar o SUBACK, a sessão poderia
+                    // arrancar o registo AE antes dos tópicos estarem activos e a resposta
+                    // do CSE seria perdida.
                     try {
                         mqttClient.subscribe(
                                 new String[]{topicResp, topicNotif},
-                                new int[]{1, 1}  // QoS 1 — at-least-once delivery
+                                new int[]{1, 1},   // QoS 1 — at-least-once delivery
+                                null,              // userContext
+                                new IMqttActionListener() {
+                                    @Override
+                                    public void onSuccess(IMqttToken token) {
+                                        connected = true;
+                                        Log.d(TAG, "MQTT connected+subscribed: " + host + ":" + port);
+                                        listener.onConnectionStatusChange(true,
+                                                "MQTT connected to " + host + ":" + port);
+                                    }
+
+                                    @Override
+                                    public void onFailure(IMqttToken token, Throwable exception) {
+                                        connected = false;
+                                        String reason = (exception != null) ? exception.getMessage() : "unknown";
+                                        Log.e(TAG, "MQTT subscribe failed: " + reason);
+                                        listener.onConnectionStatusChange(false,
+                                                "MQTT subscribe failed: " + reason);
+                                    }
+                                }
                         );
-                        connected = true;
-                        Log.d(TAG, "MQTT connected: " + host + ":" + port);
-                        listener.onConnectionStatusChange(true,
-                                "MQTT connected to " + host + ":" + port);
                     } catch (MqttException e) {
-                        Log.e(TAG, "MQTT subscribe failed: " + e.getMessage());
+                        Log.e(TAG, "MQTT subscribe init: " + e.getMessage());
                         listener.onConnectionStatusChange(false,
                                 "MQTT subscribe failed: " + e.getMessage());
                     }

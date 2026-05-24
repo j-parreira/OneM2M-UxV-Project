@@ -56,30 +56,28 @@ Wait for the CSE to be healthy on `:8080`. See `docs/ai-context/cse-dev.md`.
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────┐
-│                Android App (RC)             │
-│                                             │
-│  DuvopsView ──► TelemetryManager            │
-│       │              │ sendTelemetry()       │
-│       ▼              ▼                      │
-│  OneM2MSession  (ProtocolClient)            │
-│       │   AE registration, CIN, ACK        │
-│       ▼                                     │
-│  NetworkManager (WebSocket / okhttp3)       │
-└─────────────────┬───────────────────────────┘
-                  │  ws://host:8180
-                  ▼
-        ┌─────────────────┐
-        │   ACME CSE      │
-        │   /id-in/uxv/   │
-        └────────┬────────┘
-                 │
-        ┌────────▼────────┐
-        │ Streamlit Dashboard │
-        └─────────────────┘
+┌──────────────────────────────────────────────────────┐
+│                   Android App (RC)                   │
+│                                                      │
+│  DuvopsView ──► TelemetryManager                     │
+│      │  (protocol spinner)  │ sendTelemetry()        │
+│      ▼                      ▼                        │
+│  OneM2MSession        (ProtocolClient)               │
+│      │   AE registration, CIN, SUB, ACK              │
+│      ▼                                               │
+│  ┌─────────────┬────────────┬────────────┐           │
+│  │NetworkMgr   │MqttProto   │HttpProto   │CoApProto  │
+│  │(WebSocket)  │(Paho 1.2.5)│(OkHttp +  │(Californium│
+│  │             │            │NanoHTTPD) │2.7.4)      │
+│  └──────┬──────┴─────┬──────┴─────┬─────┴─────┬─────┘
+│         │            │            │           │      │
+└─────────┼────────────┼────────────┼───────────┼──────┘
+          │ ws:8180    │ mqtt:1883  │ http:8080 │ coap:5683
+          └────────────┴────────────┴───────────┴──────►
+                                ACME CSE /cse-in/uxv/
 ```
 
-The `ProtocolClient` interface decouples the transport from all flight and telemetry logic. Replacing WebSocket with MQTT/HTTP/CoAP requires only a new `ProtocolClient` implementation — `OneM2MSession`, `FlightManager`, and `TelemetryManager` are unchanged.
+The `ProtocolClient` interface decouples the transport from all flight and telemetry logic. `OneM2MSession`, `FlightManager`, and `TelemetryManager` are protocol-agnostic. Swapping protocols is done at connect time via `DuvopsView.buildTransport()`.
 
 ---
 
@@ -98,16 +96,16 @@ After connecting, the app creates the following OneM2M resource tree on the CSE:
     └── ack               ← CNT (mni=200) — command receipt timestamps
 ```
 
-### Registration sequence (6 async steps)
+### Registration sequence (6 async steps, all transports)
 
 ```
-connect(host, 8180, serialNumber)
-  → WebSocket opens  → registerAE()              [ty=2, /id-in]
-  → 2001/4105        → createTelemetryContainer  [ty=3, rn=telemetry]
-  → 2001/4105        → createCommandsContainer   [ty=3, rn=commands]
-  → 2001/4105        → createSubscription        [ty=23, /id-in/uxv/commands]
-  → 2001/4105        → createAckContainer        [ty=3, rn=ack]
-  → 2001/4105        → session ready → startTelemetry()
+connect(host, port, serialNumber)
+  → transport connects  → registerAE()              [ty=2, to="id-in", poa=[transport URL]]
+  → 2001/4105           → createTelemetryContainer  [ty=3, rn=telemetry]
+  → 2001/4105           → createCommandsContainer   [ty=3, rn=commands]
+  → 2001/4105           → createSubscription        [ty=23, to="cse-in/uxv/commands"]
+  → 2001/4105           → createAckContainer        [ty=3, rn=ack]
+  → 2001/4105           → session ready → startTelemetry()
 ```
 
 HTTP 4105 (Conflict — resource already exists) is treated as success, enabling reconnect without clearing the CSE.
@@ -242,65 +240,54 @@ Full reference: [`docs/command-reference.md`](docs/command-reference.md)
 src/android/
 ├── app/src/main/java/com/dji/sdk/duvops/
 │   ├── app/
-│   │   ├── App.java              EventBus singleton + DJI product accessor
-│   │   ├── MainActivity.java     Launcher, USB accessory handler
-│   │   └── MainContent.java      SDK registration screen
+│   │   ├── App.java                  EventBus singleton + DJI product accessor
+│   │   ├── MainActivity.java         Launcher, USB accessory handler
+│   │   └── MainContent.java          SDK registration screen
 │   ├── flight/
-│   │   ├── DuvopsView.java  ⭐   Main UI, orchestrates all managers
-│   │   ├── FlightActivity.java   Fullscreen wrapper for DuvopsView
-│   │   ├── FlightManager.java ⭐  Executes 17 flight commands via DJI SDK
-│   │   ├── TelemetryManager.java ⭐ 250 ms timer, 22 telemetry fields
-│   │   ├── CameraManager.java    Zoom (×240 focal length) + RGB/IR/SPLIT modes
-│   │   └── PIDController.java    PID for GPS waypoint navigation
+│   │   ├── DuvopsView.java  ⭐        Main UI; protocol spinner; buildTransport()
+│   │   ├── FlightActivity.java       Fullscreen wrapper for DuvopsView
+│   │   ├── FlightManager.java ⭐      Executes 18 flight commands via DJI SDK
+│   │   ├── TelemetryManager.java ⭐   250 ms timer, 22+ telemetry fields
+│   │   ├── CameraManager.java        Zoom (×240 focal length) + RGB/IR/SPLIT modes
+│   │   └── PIDController.java        PID for GPS waypoint navigation
 │   └── network/
-│       ├── ProtocolClient.java ⭐  Transport abstraction interface
-│       ├── OneM2MSession.java  ⭐  AE registration, CIN, SUB, ACK, reconnect
-│       ├── NetworkManager.java ⭐  WebSocket transport (okhttp3)
-│       ├── SocketListener.java    WebSocket lifecycle callbacks
-│       └── DroneCommandListener.java  17-method command interface
+│       ├── ProtocolClient.java ⭐     Transport abstraction interface (4 transports)
+│       ├── OneM2MSession.java  ⭐     AE registration, CIN, SUB, ACK, reconnect
+│       ├── NetworkManager.java ⭐     WebSocket transport (okhttp3)
+│       ├── MqttProtocolClient.java ⭐ MQTT transport (Paho 1.2.5)
+│       ├── HttpProtocolClient.java ⭐ HTTP transport (OkHttp + NanoHTTPD 2.3.1)
+│       ├── CoApProtocolClient.java ⭐ CoAP transport (Californium 2.7.4)
+│       ├── SocketListener.java       WebSocket lifecycle callbacks
+│       └── DroneCommandListener.java 18-method command interface
 ├── docs/
-│   ├── telemetry-reference.md    All 22 telemetry fields documented
-│   ├── command-reference.md      All 17 commands with parameters and ACK format
+│   ├── telemetry-reference.md        All telemetry fields documented
+│   ├── command-reference.md          All commands with parameters and ACK format
 │   └── DJIMobileSDKAndroidAPIReference.md  Local copy of DJI SDK v4 API docs
-└── CLAUDE.md                     Architecture guide for AI-assisted development
+└── CLAUDE.md                         Architecture guide for AI-assisted development
 ```
 
 ---
 
-## Adding a New Protocol (MQTT, HTTP, CoAP)
+## Protocol Transports
 
-The `ProtocolClient` interface isolates all transport details. To add MQTT:
+All 4 transports are implemented. The spinner in the `DuvopsView` top bar selects the protocol at connect time. `DuvopsView.buildTransport(protocol)` instantiates the right client; `session.setTransport(newTransport)` swaps it before `connect()` is called.
 
-**1.** Add the dependency to `app/build.gradle`:
-```groovy
-implementation 'org.eclipse.paho:org.eclipse.paho.client.mqttv3:1.2.5'
-```
+| Transport | Class | Default port | `poa` in AE | Notification mechanism |
+|---|---|---|---|---|
+| WebSocket | `NetworkManager` | 8180 | `ws://cse_ip:8180` | CSE reuses active WS connection |
+| MQTT | `MqttProtocolClient` | 1883 | `mqtt://cse_ip:1883` | Broker publishes to `TOPIC_NOTIF` |
+| HTTP | `HttpProtocolClient` | 8080 | `http://rc_ip:8181` | CSE POSTs to embedded NanoHTTPD |
+| CoAP | `CoApProtocolClient` | 5683 | `coap://rc_ip:5684` | CSE sends CON POST to embedded Californium server |
 
-**2.** Create `network/MqttProtocolClient.java`:
-```java
-public class MqttProtocolClient implements ProtocolClient {
-    // Constructor takes DroneCommandListener (for connection events)
-    @Override public void connect(String host, int port, String aeId) { ... }
-    @Override public void sendTelemetry(String json) { ... }
-    @Override public void disconnect() { ... }
-    @Override public boolean isConnected() { ... }
-    @Override public void setCommandLogListener(CommandLogListener l) { ... }
-    // Also implement RawMessageListener to intercept incoming messages
-}
-```
+`OneM2MSession` is protocol-agnostic — registration sequence, telemetry wrapping, ACK sending, and reconnect are all unchanged across transports.
 
-**3.** In `DuvopsView`, swap the transport:
-```java
-// Replace:
-NetworkManager transport = new NetworkManager(session);
-// With:
-MqttProtocolClient transport = new MqttProtocolClient(session);
-session.setTransport(transport);  // if MqttProtocolClient also exposes setRawMessageListener
-```
+### Transport-specific behaviour
 
-`OneM2MSession` is protocol-agnostic — the 6-step registration, telemetry wrapping, ACK sending, and reconnect logic all remain unchanged.
-
-**4.** Add a protocol selector spinner to the `DuvopsView` top bar.
+| | WS ACK | MQTT ACK | HTTP ACK | CoAP ACK |
+|---|---|---|---|---|
+| `requiresExplicitNotifyAck()` | `true` | `true` | `false` | `false` |
+| Notification format | `{"op":5,"pc":{"m2m:sgn":{...}}}` | `{"m2m:sgn":{...}}` | `{"m2m:sgn":{...}}` | `{"m2m:sgn":{...}}` |
+| ACK sent via | `sendTelemetry()` → TOPIC_REQ | `sendAck()` → TOPIC_RESP | HTTP 200 (implicit) | CoAP 2.04 (implicit) |
 
 ---
 
@@ -311,9 +298,10 @@ session.setTransport(transport);  // if MqttProtocolClient also exposes setRawMe
 | Video feed unavailable in simulator | Test on physical RC only |
 | Virtual sticks drift on long missions | PID updates every 200 ms — do not reduce interval |
 | Zoom commands fail in IR mode | Send `setCameraMode RGB` before `setZoom` |
-| `nu` field in subscription may not deliver notifications | If commands are not received, change `nu` from `/id-in/uxv` to `aeOriginator` in `OneM2MSession.createSubscription()` |
 | Gimbal pitch out of range on some missions | Pitch is clamped to [−90, +30] before sending |
-| `t_send_ms` drift under heavy NTP adjustments | Use `seq` gaps for packet loss; treat latency as approximate |
+| `t_send_ms` drift under heavy NTP adjustments | Use `seq` gaps for packet loss; treat `latency_ms` as NTP-dependent |
+| HTTP/CoAP notification reachability | CSE container must reach RC's WiFi LAN IP — both on same subnet |
+| CoAP flat JSON body — needs end-to-end test | ACME CSE v2025.11 CoAP binding not yet tested with full flat JSON payload |
 
 ---
 
@@ -322,7 +310,10 @@ session.setTransport(transport);  // if MqttProtocolClient also exposes setRawMe
 | Library | Version | Purpose |
 |---|---|---|
 | DJI Mobile SDK | 4.16.4 | Drone control, telemetry, video |
-| OkHttp3 | 3.11.0 | WebSocket transport |
+| OkHttp3 | 3.11.0 | WebSocket transport (`NetworkManager`) + HTTP requests (`HttpProtocolClient`) |
+| Paho MQTT | 1.2.5 | MQTT transport (`MqttProtocolClient`) |
+| NanoHTTPD | 2.3.1 | Embedded HTTP callback server for push notifications (HTTP transport) — `org.nanohttpd:nanohttpd` |
+| Californium Core | 2.7.4 | CoAP transport (`CoApProtocolClient`) — Java 8 compatible; 3.x requires Java 11 |
 | Otto | 1.3.8 | Event bus (MainActivity ↔ MainContent) |
 | AndroidX AppCompat | 1.0.0 | Activity base classes |
 | AndroidX ConstraintLayout | 1.1.3 | Required by DJI SDK internal layouts |
@@ -339,4 +330,5 @@ session.setTransport(transport);  // if MqttProtocolClient also exposes setRawMe
   - **Scenario 1** — Telemetry stream at 1, 5, 10 msg/s
   - **Scenario 2** — Command burst (50 commands), latency measured via ACK timestamps
   - **Scenario 3** — Degraded network (`tc netem` inside CSE container)
-- **Protocols under test:** WebSocket ✅ · MQTT 🔜 · HTTP 🔜 · CoAP 🔜
+- **Protocols implemented:** WebSocket ✅ · MQTT ✅ · HTTP ✅ · CoAP ✅
+- **Next step:** end-to-end integration test — all 4 vs real ACME CSE
