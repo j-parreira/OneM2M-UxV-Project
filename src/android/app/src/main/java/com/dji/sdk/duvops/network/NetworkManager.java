@@ -68,12 +68,7 @@ public class NetworkManager implements ProtocolClient {
      * Listener de mensagens raw — quando definido (por OneM2MSession), todas as
      * mensagens são entregues aqui e o dispatch normal de comandos é ignorado.
      */
-    private RawMessageListener rawMessageListener;
-
-    /** Callback para entrega de mensagens raw ao protocolo OneM2M. */
-    public interface RawMessageListener {
-        void onRawMessage(String json);
-    }
+    private ProtocolClient.RawMessageListener rawMessageListener;
 
     /**
      * Define o listener de mensagens raw (usado por {@link OneM2MSession}).
@@ -83,8 +78,22 @@ public class NetworkManager implements ProtocolClient {
      *
      * @param listener listener a chamar para cada mensagem recebida
      */
-    public void setRawMessageListener(RawMessageListener listener) {
+    @Override
+    public void setRawMessageListener(ProtocolClient.RawMessageListener listener) {
         this.rawMessageListener = listener;
+    }
+
+    /**
+     * Retorna o URL do Point of Access deste transporte WebSocket.
+     *
+     * <p>Formato: {@code ws://host:port}. Usado pelo {@link OneM2MSession}
+     * no campo {@code poa} do registo do AE.
+     *
+     * @return URL do poa WebSocket
+     */
+    @Override
+    public String getPoaUrl() {
+        return serverUrl;
     }
 
     /**

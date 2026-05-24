@@ -98,6 +98,13 @@ dependencies {
     // WebSocket transport
     implementation 'com.squareup.okhttp3:okhttp:3.11.0'
 
+    // MQTT transport (Paho pure Java — no Android service wrapper needed)
+    implementation 'org.eclipse.paho:org.eclipse.paho.client.mqttv3:1.2.5'
+    // HTTP notification callback server (embedded, no extra Activity required)
+    implementation 'fi.iki.elonen:nanohttpd:2.3.1'
+    // CoAP transport — 2.7.4 required for Java 8 (Californium 3.x requires Java 11)
+    implementation 'org.eclipse.californium:californium-core:2.7.4'
+
     // Kotlin stdlib (runtime for DJI SDK Kotlin internals)
     implementation "org.jetbrains.kotlin:kotlin-stdlib-jdk7:$kotlin_version"
 

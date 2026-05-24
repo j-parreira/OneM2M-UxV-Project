@@ -42,6 +42,14 @@
             android:textColor="#FFF"
             android:textColorHint="#AAA" />
 
+        <!-- Selector de protocolo: WebSocket / MQTT / HTTP / CoAP -->
+        <Spinner
+            android:id="@+id/protocolSpinner"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:backgroundTint="#FFFFFF"
+            android:spinnerMode="dropdown" />
+
         <!-- Botão de ligação/desligação ao ACME CSE (toggle) -->
         <Button
             android:id="@+id/connectws"

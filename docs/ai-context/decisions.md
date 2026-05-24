@@ -62,10 +62,10 @@ Priority order given the 2026-06-06 hard deadline:
 
 1. ✅ **CSE Docker setup** — ACME CSE v2025.11 running with all 4 protocols
 2. ✅ **Android app** — full OneM2M AE, WebSocket verified, ACK + seq implemented
-3. 🔜 **Streamlit orchestrator** — trigger benchmark runs, log to `data/raw/`
-4. 🔜 **WebSocket + MQTT benchmarks** — Scenarios 1 & 2 — minimum for course paper
+3. ✅ **Streamlit orchestrator** — trigger benchmark runs, log to `data/raw/`
+4. 🔜 **WebSocket + MQTT benchmarks** — Scenarios 1 & 2 — minimum for the report
 5. 🔜 **Analysis + plots** — latency, throughput, overhead, Kruskal-Wallis tests
-6. ⏳ **HTTP + CoAP** — stretch goal for June 6; definite for conference paper
+6. ⏳ **HTTP + CoAP** — stretch goal for June 6; extended work post-deadline
 7. ⏳ **Scenario 3 (degraded network)** — after June 6
 
 ---

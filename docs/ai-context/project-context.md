@@ -8,8 +8,9 @@
 
 This is an academic benchmarking study. We connect a **DJI Mavic 2 Enterprise Advanced (M2EA)**
 drone to an **ACME CSE (OneM2M)** server using four different communication protocols, then
-measure performance metrics to compare them. The goal is a peer-reviewed paper at an IEEE/ACM
-conference.
+measure performance metrics to compare them. The deliverable is an academic report for the
+course Mobilidade em Sistemas Computacionais (IPL Leiria). Structure TBD but follows standard
+academic conventions. A conference paper may follow later but is not a priority.
 
 The system has three layers:
 
@@ -22,7 +23,7 @@ The system has three layers:
    the resource tree (`/cse-in/uxv/telemetry`, `/cse-in/uxv/commands`, `/cse-in/uxv/ack`)
    and routes messages between the drone app and the dashboard via subscriptions.
 
-3. **Test Control Layer** — A Streamlit dashboard (to be built) that dispatches commands to
+3. **Test Control Layer** — A Streamlit dashboard that dispatches commands to
    the drone and logs telemetry + ACKs. It is the orchestrator for benchmark runs.
 
 ---
@@ -57,9 +58,9 @@ For each protocol × scenario combination:
 ## Directory Roles
 
 ```
-src/android/   ⭐ WebSocket COMPLETE — Android app on DJI RC. Full OneM2M AE (WebSocket).
-               Java, DJI SDK v4. Tested against ACME CSE v2025.11.
-               🔜 MQTT / HTTP / CoAP transport clients pending (ProtocolClient interface ready).
+src/android/   ⭐ ALL 4 PROTOCOLS COMPLETE — Android app on DJI RC. Full OneM2M AE.
+               Java, DJI SDK v4. WS tested against ACME CSE v2025.11.
+               WS/MQTT/HTTP/CoAP transports + protocol selector spinner. Pending: e2e tests.
 
 src/cse/       ⭐ COMPLETE — ACME CSE v2025.11 in Docker Compose.
                HTTP :8080, WebSocket :8180, CoAP :5683/udp + Mosquitto :1883.
@@ -86,7 +87,7 @@ docs/          Reference documentation. Read ai-context/ before starting any sub
 - ACME CSE must be reachable from the RC controller (same LAN — WiFi hotspot works)
 - CoAP uses UDP — DTLS not supported in ACME CSE v2025.11; use without TLS
 - All parameters must be reproducible: log timestamps, software versions, config state
-- **Deadline:** 2026-06-06 (course paper); minimum 2 protocols + preliminary results
+- **Deadline:** 2026-06-06 (relatório académico); minimum 2 protocols + preliminary results
 
 ---
 
@@ -94,10 +95,11 @@ docs/          Reference documentation. Read ai-context/ before starting any sub
 
 | Deadline | Artefact | Status |
 |---|---|---|
-| **2026-06-06** | Course paper — Mobilidade em Sistemas Computacionais | 🔴 Hard |
-| After June 6 | IEEE/ACM conference paper (extended version) | — |
+| **2026-06-06** | Relatório académico — Mobilidade em Sistemas Computacionais (IPL Leiria) | 🔴 Hard |
+| After June 6 | Possível artigo de conferência (não prioritário) | — |
 
-Course paper minimum: system architecture, methodology, ≥ 2 protocols with results.
+Report minimum: system architecture, methodology, ≥ 2 protocols with results.
+Report structure: standard academic conventions — not yet fully defined.
 
 ---
 
@@ -115,14 +117,19 @@ the CSE IP via a field in the main screen.
 
 ### Completed and verified
 
-- **Android app** (`src/android/`) — full OneM2M AE, WebSocket transport:
+- **Android app** (`src/android/`) — full OneM2M AE, all 4 transports (2026-05-24):
   - AE registration, 4 containers, subscription, ACK container
   - Telemetry: 22+ fields at configurable rate (250ms default), `seq` + `t_send_ms`
   - Commands: 18 flight commands + `setTelemetryRate` benchmark control
   - Command ACK: `{command, seq_cmd, t_cmd_ms, t_recv_ms, t_exec_ms}`
   - Reconnect backoff (1s→30s), request timeout (10s)
-  - Tested: 9/9 flow test steps passing against real ACME CSE
-  - `ProtocolClient` interface ready for MQTT/HTTP/CoAP transports
+  - Tested: 9/9 flow test steps passing against real ACME CSE (WebSocket)
+  - `ProtocolClient` interface + `OneM2MSession` refactored for multi-protocol
+  - **`MqttProtocolClient`** — Paho 1.2.5, TOPIC_REQ/RESP/NOTIF, ACK on TOPIC_RESP
+  - **`HttpProtocolClient`** — OkHttp async POST + NanoHTTPD 2.3.1 callback server (port 8181)
+  - **`CoApProtocolClient`** — Californium 2.7.4 async CON + CoapServer callback (port 5684)
+  - **Protocol selector UI** — Spinner in top bar (WebSocket/MQTT/HTTP/CoAP)
+  - Fixed: reconnect bug (was passing raw serial instead of `aeOriginator`)
 
 - **CSE** (`src/cse/`) — Docker Compose with ACME CSE v2025.11:
   - All 4 protocols active (HTTP, WebSocket, MQTT, CoAP)
@@ -138,14 +145,10 @@ the CSE IP via a field in the main screen.
 
 ### Remaining (priority order for June 6)
 
-1. **Android MQTT client** (`MqttProtocolClient.java`) — Paho library, AE reg + CIN + SUB + ACK
-2. **Android HTTP client** (`HttpProtocolClient.java`) — OkHttp REST + embedded callback server
-3. **Android CoAP client** (`CoApProtocolClient.java`) — Californium library
-4. **Android protocol selector UI** — spinner in `DuvopsView` to switch transport at runtime
-5. End-to-end integration test with all 4 protocols
-6. Benchmark runs: all 4 protocols, Scenarios 1 & 2, ≥30 runs each
-7. `src/analysis/` — statistics + figures
-8. Paper writing
+1. **End-to-end integration test** — MQTT first, then HTTP/CoAP against real ACME CSE
+2. **Benchmark runs** — all 4 protocols, Scenarios 1 & 2, ≥30 runs each
+3. **`src/analysis/`** — statistics + figures (Kruskal-Wallis, Dunn, Cliff's delta)
+4. **Relatório académico** writing
 
 ---
 

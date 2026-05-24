@@ -173,7 +173,7 @@ connect(host, 8180, serialNumber)
 
 ## Estado da Implementação Multi-Protocolo
 
-### Completo ✅
+### Completo ✅ (2026-05-24)
 | Item | Notas |
 |---|---|
 | Campos `seq` + `t_send_ms` na telemetria | — |
@@ -183,16 +183,20 @@ connect(host, 8180, serialNumber)
 | Configurable telemetry rate (`setTelemetryRate`) | — |
 | Estado do drone na UI | droneStateField |
 | WebSocket transport (`NetworkManager.java`) | Testado end-to-end contra ACME CSE v2025.11 |
-| `ProtocolClient` interface | Desenhada para os 4 transportes |
-| `OneM2MSession` (decorator) | Protocol-agnostic; partilhado pelos 4 transportes |
+| `ProtocolClient` interface | Refactored: `getPoaUrl()`, `requiresExplicitNotifyAck()`, `sendAck()`, `RawMessageListener` |
+| `OneM2MSession` (decorator) | Protocol-agnostic; partilhado pelos 4 transportes; bug fix reconnect |
+| `MqttProtocolClient` | Paho 1.2.5; TOPIC_REQ/RESP/NOTIF; ACK via TOPIC_RESP (override) |
+| `HttpProtocolClient` | OkHttp async POST + NanoHTTPD 2.3.1 callback (porta 8181) |
+| `CoApProtocolClient` | Californium 2.7.4 CON POST + CoapServer callback (porta 5684) |
+| Protocol selector spinner | Spinner na barra superior: WebSocket / MQTT / HTTP / CoAP |
 
-### Pendente 🔜 (para benchmark completo)
-| Item | Ficheiro a criar | Notas |
-|---|---|---|
-| `MqttProtocolClient` | `network/MqttProtocolClient.java` | Lib: Paho `org.eclipse.paho.client.mqttv3:1.2.5`; `poa=["mqtt://host:1883"]` no AE |
-| `HttpProtocolClient` | `network/HttpProtocolClient.java` | OkHttp REST POST + servidor HTTP embebido para notificações push |
-| `CoApProtocolClient` | `network/CoApProtocolClient.java` | Lib: Californium `org.eclipse.californium:californium-core:3.x` |
-| Protocol selector UI | `DuvopsView.java` (spinner) | Substituir `new NetworkManager(session)` pelo transport seleccionado |
+### Pendente 🔜 (para benchmark)
+| Item | Notas |
+|---|---|
+| End-to-end MQTT test | Testar registo AE + notificações vs ACME CSE real |
+| End-to-end HTTP test | Verificar callback reachability (Docker → RC WiFi IP) |
+| End-to-end CoAP test | CoAP URI query params vs CoAP options — pode precisar ajuste |
+| Benchmark runs (S1, S2) | ≥30 runs × 4 protocolos |
 
 ---
 
@@ -209,7 +213,7 @@ AE poa:  ["ws://cse_ip:8180"]
 Notificações: CSE reutiliza a ligação WS activa (mesmo originator em associatedConnections)
 ```
 
-### MQTT — `MqttProtocolClient.java` (🔜 a implementar)
+### MQTT — `MqttProtocolClient.java` (✅ COMPLETO)
 
 ```
 Ligação: MQTT broker em cse_ip:1883, clientId = originator (ex: C3LKFD12ABC)
@@ -220,39 +224,36 @@ Notificações: subscribe em /oneM2M/req/id-in/C<serial>/json (broker → AE)
 
 Dependência: `org.eclipse.paho:org.eclipse.paho.client.mqttv3:1.2.5`
 
-### HTTP — `HttpProtocolClient.java` (🔜 a implementar)
+### HTTP — `HttpProtocolClient.java` (✅ COMPLETO)
 
 ```
-CIN send: OkHttp POST para http://cse_ip:8080/cse-in/uxv/telemetry
-          Headers: X-M2M-Origin, X-M2M-RI, X-M2M-RVI=3, Content-Type: application/json;ty=4
-AE poa:  ["http://rc_ip:callback_port"]   ← IP do RC na LAN, porta livre
-Notificações: Android expõe servidor HTTP embebido (porta callback_port)
-              CSE faz POST para http://rc_ip:callback_port com o m2m:sgn
-              Android ACK: HTTP 200 OK
+CIN send: OkHttp POST assíncrono para http://cse_ip:8080/{to}
+          Headers: X-M2M-Origin, X-M2M-RI, X-M2M-RVI, Content-Type: application/json;ty={ty}
+          rsc lido de X-M2M-RSC (não do HTTP status code)
+AE poa:  ["http://rc_ip:8181"]   ← IP WiFi do RC (WifiManager), porta fixa 8181
+Notificações: NanoHTTPD 2.3.1 na porta 8181
+              CSE faz POST com {"m2m:sgn":{...}}
+              ACK: HTTP 200 OK (requiresExplicitNotifyAck = false)
 ```
 
 > **Reachability:** O contentor Docker do CSE deve conseguir atingir o IP do RC na LAN.
-> O `rc_ip` é o IP do RC no WiFi — configurado na UI, não hardcoded.
-> O `callback_port` é uma porta aleatória livre escolhida na ligação.
+> O IP é obtido via `WifiManager` em `connect()`. Porta de callback fixa: 8181.
 
-Dependência: OkHttp (já presente como dep do DJI SDK)
-
-### CoAP — `CoApProtocolClient.java` (🔜 a implementar)
+### CoAP — `CoApProtocolClient.java` (✅ COMPLETO)
 
 ```
-Ligação: UDP coap://cse_ip:5683 (sem DTLS — ACME CSE v2025.11 não suporta)
-CIN send: CoAP POST para coap://cse_ip:5683/cse-in/uxv/telemetry (Confirmable)
-          Options: Content-Format=application/json (50), Accept=application/json
-AE poa:  ["coap://rc_ip:callback_port"]
-Notificações: Android expõe servidor CoAP embebido (UDP, porta callback_port)
-              CSE faz CoAP PUT para coap://rc_ip:callback_port
-              Android ACK: CoAP 2.04 Changed
+CIN send: Californium 2.7.4 CON POST assíncrono para coap://cse_ip:5683/{to}
+          URI query params: X-M2M-Origin, X-M2M-RI, X-M2M-RVI, ty
+          Content-Format: 50 (application/json)
+AE poa:  ["coap://rc_ip:5684"]   ← IP WiFi do RC, porta fixa 5684 (UDP)
+Notificações: CoapServer (Californium) na porta 5684 UDP, resource /notify
+              CSE envia POST/PUT com {"m2m:sgn":{...}}
+              ACK: CoAP 2.04 Changed (requiresExplicitNotifyAck = false)
 ```
 
-> **Reachability:** Mesmo constraint que HTTP — CSE container deve atingir IP do RC.
+> **Nota:** URI query params para headers oneM2M pode necessitar ajuste após teste vs CSE real.
+> Californium 2.7.4 (Java 8) — não usar 3.x (requer Java 11).
 > CoAP usa UDP — verificar que a LAN não bloqueia UDP entre container e RC.
-
-Dependência: `org.eclipse.californium:californium-core:3.x`
 
 ---
 
@@ -505,7 +506,7 @@ app/src/main/java/com/dji/sdk/duvops/
 │   ├── MainActivity.java         # Launcher; USB accessory handler
 │   └── MainContent.java          # Home screen; DJI SDK registration + permissões
 ├── flight/
-│   ├── DuvopsView.java           # ⭐ UI principal; instancia OneM2MSession + NetworkManager
+│   ├── DuvopsView.java           # ⭐ UI principal; spinner protocolo; buildTransport()
 │   ├── FlightActivity.java       # Wrapper fullscreen para DuvopsView
 │   ├── FlightManager.java        # ⭐ Executa comandos de voo; impl DroneCommandListener
 │   ├── CameraManager.java        # Zoom e modo de câmara via KeyManager
@@ -515,6 +516,9 @@ app/src/main/java/com/dji/sdk/duvops/
     ├── ProtocolClient.java        # ⭐ Interface de transporte (WS/MQTT/HTTP/CoAP)
     ├── OneM2MSession.java         # ⭐ Sessão OneM2M: AE reg + CIN + SUB + dispatch
     ├── NetworkManager.java        # ⭐ Transporte WebSocket (okhttp3); impl ProtocolClient
+    ├── MqttProtocolClient.java    # ⭐ Transporte MQTT (Paho 1.2.5); impl ProtocolClient
+    ├── HttpProtocolClient.java    # ⭐ Transporte HTTP (OkHttp + NanoHTTPD); impl ProtocolClient
+    ├── CoApProtocolClient.java    # ⭐ Transporte CoAP (Californium 2.7.4); impl ProtocolClient
     ├── SocketListener.java        # Callbacks do WebSocket → NetworkManager
     └── DroneCommandListener.java  # Interface de comandos de voo (18 métodos)
 ```
@@ -522,38 +526,29 @@ app/src/main/java/com/dji/sdk/duvops/
 
 ---
 
-## How to Add a New Protocol Client
+## Arquitectura Multi-Protocolo — Estado Actual (2026-05-24)
 
-Para adicionar MQTT (exemplo):
+Todos os 4 transportes estão implementados. O fluxo de selecção é:
 
-1. Adicionar dependência em `app/build.gradle`:
-   ```groovy
-   implementation 'org.eclipse.paho:org.eclipse.paho.client.mqttv3:1.2.5'
-   ```
+```
+DuvopsView.connectToCse()
+  → protocolSpinner.getSelectedItem() → "WebSocket" / "MQTT" / "HTTP" / "CoAP"
+  → buildTransport(protocol) → NetworkManager / MqttProtocolClient / Http... / CoAp...
+  → session.setTransport(newTransport) → swap do transport na sessão
+  → session.connect(host, port, serialNumber) → inicia sequência de 6 passos OneM2M
+```
 
-2. Criar `network/MqttProtocolClient.java` que implementa `ProtocolClient`:
-   ```java
-   public class MqttProtocolClient implements ProtocolClient {
-       @Override public void connect(String host, int port, String aeId) { ... }
-       @Override public void sendTelemetry(String json) { ... }
-       // ...
-   }
-   ```
+Ao trocar o transport, `OneM2MSession` mantém toda a lógica oneM2M — só o canal de rede muda.
+O `protocolClient` (= session) nunca muda — apenas o transport interno.
 
-3. Em `DuvopsView`, substituir a construção do transport:
-   ```java
-   // Antes (WebSocket):
-   NetworkManager transport = new NetworkManager(session);
-   // Depois (MQTT):
-   MqttProtocolClient transport = new MqttProtocolClient(session);
-   ```
-   `OneM2MSession` não muda — é protocol-agnostic.
+### Diferenças entre transportes
 
-4. Adicionar selector de protocolo na UI (spinner ou settings screen).
-
-> `OneM2MSession` tem de implementar `DroneCommandListener` para o transport concreto
-> poder notificar eventos de conexão. Garantir que o novo transport chama
-> `listener.onConnectionStatusChange()` quando a ligação abre/fecha.
+| Transport | ACK explícito | Formato notificação | Thread do callback |
+|---|---|---|---|
+| WebSocket | Sim (`sendAck` = `sendTelemetry`) | `{"op":5,"pc":{"m2m:sgn":{...}}}` | OkHttp callback |
+| MQTT | Sim (`sendAck` publica TOPIC_RESP) | `{"m2m:sgn":{...}}` directo | Paho callback |
+| HTTP | Não (HTTP 200 = ACK) | `{"m2m:sgn":{...}}` directo | NanoHTTPD thread |
+| CoAP | Não (2.04 Changed = ACK) | `{"m2m:sgn":{...}}` directo | Californium thread |
 
 ---
 

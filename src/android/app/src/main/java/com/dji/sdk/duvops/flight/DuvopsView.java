@@ -35,15 +35,20 @@ import android.content.SharedPreferences;
 import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.View;
+import android.widget.ArrayAdapter;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.LinearLayout;
+import android.widget.Spinner;
 import android.widget.TextView;
 
 import androidx.annotation.NonNull;
 
 import com.dji.sdk.duvops.R;
 import com.dji.sdk.duvops.app.App;
+import com.dji.sdk.duvops.network.CoApProtocolClient;
+import com.dji.sdk.duvops.network.HttpProtocolClient;
+import com.dji.sdk.duvops.network.MqttProtocolClient;
 import com.dji.sdk.duvops.network.NetworkManager;
 import com.dji.sdk.duvops.network.OneM2MSession;
 import com.dji.sdk.duvops.network.ProtocolClient;
@@ -65,8 +70,9 @@ public class DuvopsView extends LinearLayout implements View.OnClickListener {
 
     private static final String PREFS_NAME     = "duvops_prefs";
     private static final String KEY_SERVER_URL  = "server_url";
-    private static final String DEFAULT_CSE_HOST    = "192.168.1.100";
-    private static final int    DEFAULT_CSE_WS_PORT = 8180;
+    private static final String DEFAULT_CSE_HOST     = "192.168.1.100";
+    /** Nomes dos protocolos no spinner — índice 0 é o default (WebSocket). */
+    private static final String[] PROTOCOLS = {"WebSocket", "MQTT", "HTTP", "CoAP"};
 
     private SharedPreferences prefs;
 
@@ -83,6 +89,9 @@ public class DuvopsView extends LinearLayout implements View.OnClickListener {
 
     /** Abort de emergência — chama cleanup() antes de System.exit(). */
     private Button abort;
+
+    /** Selector de protocolo: WebSocket, MQTT, HTTP, CoAP. */
+    private Spinner protocolSpinner;
 
     /**
      * Estado da sessão OneM2M.
@@ -173,11 +182,12 @@ public class DuvopsView extends LinearLayout implements View.OnClickListener {
             }
         });
 
-        // 2. Stack: OneM2MSession → NetworkManager (WebSocket)
-        session   = new OneM2MSession(flightManager);
-        NetworkManager transport = new NetworkManager(session);
-        session.setTransport(transport);
+        // 2. Stack: OneM2MSession → transport (WebSocket por defeito)
+        // O transport concreto é criado em connectToCse() com base no spinner.
+        session        = new OneM2MSession(flightManager);
         protocolClient = session;
+        // Registar transport inicial (WebSocket) — substituído em connectToCse()
+        session.setTransport(new NetworkManager(session));
 
         // 2a. SessionListener — actualiza statusField com estados intermédios (branco)
         session.setSessionListener(msg -> post(() -> {
@@ -244,6 +254,13 @@ public class DuvopsView extends LinearLayout implements View.OnClickListener {
         droneStateField = findViewById(R.id.droneStateField);
         hostname       = findViewById(R.id.websocketUrl);
 
+        // Spinner de protocolo — index 0 = WebSocket (default)
+        protocolSpinner = findViewById(R.id.protocolSpinner);
+        ArrayAdapter<String> spinnerAdapter = new ArrayAdapter<>(context,
+                android.R.layout.simple_spinner_item, PROTOCOLS);
+        spinnerAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        protocolSpinner.setAdapter(spinnerAdapter);
+
         String saved = prefs.getString(KEY_SERVER_URL, null);
         hostname.setText((saved == null || saved.isEmpty()) ? DEFAULT_CSE_HOST : saved);
 
@@ -300,24 +317,34 @@ public class DuvopsView extends LinearLayout implements View.OnClickListener {
     }
 
     /**
-     * Liga ao ACME CSE com o host configurado no campo {@code hostname}.
+     * Liga ao ACME CSE com o host e protocolo configurados na UI.
      *
-     * <p>Reset do estado de sessão antes de iniciar nova ligação — evita
-     * botão inconsistente durante transições.
-     * Aceita: {@code "192.168.1.100"} ou {@code "192.168.1.100:8180"}.
+     * <p>Cria o transport adequado ao protocolo seleccionado no spinner,
+     * chama {@link OneM2MSession#setTransport} para injectar o novo transport,
+     * e inicia a sequência de ligação.
+     * Aceita host no formato {@code "192.168.1.100"} ou {@code "192.168.1.100:1883"}.
      */
     private void connectToCse() {
-        // Reset do estado anterior para evitar botão inconsistente
         sessionReady = false;
         connectws.setText("Connect CSE");
 
+        // Protocolo seleccionado pelo utilizador
+        String protocol = (protocolSpinner != null)
+                ? (String) protocolSpinner.getSelectedItem()
+                : "WebSocket";
+
+        // Criar transport para o protocolo escolhido e injectar na sessão
+        ProtocolClient newTransport = buildTransport(protocol);
+        session.setTransport(newTransport);
+
+        // Parsear host — aceita prefixos de protocolo, a porta, sem eles
         String input = hostname.getText().toString().trim();
         if (input.isEmpty()) {
             input = DEFAULT_CSE_HOST;
             hostname.setText(DEFAULT_CSE_HOST);
         }
-        String host = input.replaceAll("^(ws|wss|http|https)://", "");
-        int port = DEFAULT_CSE_WS_PORT;
+        String host = input.replaceAll("^(ws|wss|http|https|mqtt|coap)://", "");
+        int port = getDefaultPort(protocol);
         int colonIdx = host.lastIndexOf(':');
         if (colonIdx > 0) {
             try {
@@ -327,6 +354,43 @@ public class DuvopsView extends LinearLayout implements View.OnClickListener {
         }
         prefs.edit().putString(KEY_SERVER_URL, host).apply();
         protocolClient.connect(host, port, serialNumber);
+    }
+
+    /**
+     * Cria o transport concreto para o protocolo seleccionado.
+     *
+     * <p>HTTP e CoAP ficam como stub até à implementação completa — usam WebSocket
+     * como fallback para não bloquear o benchmark de WS/MQTT.
+     *
+     * @param protocol nome do protocolo ("WebSocket", "MQTT", "HTTP", "CoAP")
+     * @return instância de {@link ProtocolClient} pronta para {@link OneM2MSession#setTransport}
+     */
+    private ProtocolClient buildTransport(String protocol) {
+        switch (protocol) {
+            case "MQTT":
+                return new MqttProtocolClient(session);
+            case "HTTP":
+                return new HttpProtocolClient(getContext(), session);
+            case "CoAP":
+                return new CoApProtocolClient(getContext(), session);
+            default: // "WebSocket"
+                return new NetworkManager(session);
+        }
+    }
+
+    /**
+     * Retorna a porta default para cada protocolo.
+     *
+     * @param protocol nome do protocolo
+     * @return porto default (WS=8180, MQTT=1883, HTTP=8080, CoAP=5683)
+     */
+    private int getDefaultPort(String protocol) {
+        switch (protocol) {
+            case "MQTT":  return 1883;
+            case "HTTP":  return 8080;
+            case "CoAP":  return 5683;
+            default:      return 8180; // WebSocket
+        }
     }
 
     // ── Click handling ───────────────────────────────────────────────────────

@@ -7,8 +7,8 @@ DJI UxV (unmanned vehicle) operations. Academic context: IPL Leiria, Mestrado em
 Informática.
 
 **Deadlines:**
-- **2026-06-06** — Course paper submission (Mobilidade em Sistemas Computacionais) — hard deadline
-- **After June 6** — IEEE/ACM conference paper submission (extended version)
+- **2026-06-06** — Relatório académico (Mobilidade em Sistemas Computacionais, IPL Leiria) — hard deadline
+- **After June 6** — Possível artigo de conferência (não prioritário; estrutura do relatório ainda a definir)
 
 See `docs/ai-context/project-context.md` for full system context before starting any task.
 

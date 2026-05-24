@@ -121,8 +121,8 @@ public class OneM2MSession implements ProtocolClient, DroneCommandListener {
 
     // ── Dependências ─────────────────────────────────────────────────────────
 
-    /** Transporte raw (WebSocket). Injectado via {@link #setTransport}. */
-    private NetworkManager transport;
+    /** Transporte activo (WebSocket/MQTT/HTTP/CoAP). Injectado via {@link #setTransport}. */
+    private ProtocolClient transport;
 
     /** Executor de comandos de voo (FlightManager). */
     private final DroneCommandListener commandListener;
@@ -225,13 +225,14 @@ public class OneM2MSession implements ProtocolClient, DroneCommandListener {
     }
 
     /**
-     * Define o transporte WebSocket e regista-se como receptor de mensagens raw.
+     * Define o transporte e regista-se como receptor de mensagens raw.
      *
      * <p>Deve ser chamado imediatamente após a criação, antes de {@link #connect}.
+     * Aceita qualquer implementação de {@link ProtocolClient} (WebSocket, MQTT, HTTP, CoAP).
      *
-     * @param transport instância de {@link NetworkManager} criada com {@code this} como listener
+     * @param transport implementação de {@link ProtocolClient} a usar como transporte
      */
-    public void setTransport(NetworkManager transport) {
+    public void setTransport(ProtocolClient transport) {
         this.transport = transport;
         transport.setRawMessageListener(this::onRawMessage);
     }
@@ -281,7 +282,7 @@ public class OneM2MSession implements ProtocolClient, DroneCommandListener {
         String cleaned = aeId.replaceAll("[^a-zA-Z0-9]", "");
         aeOriginator = "C" + (cleaned.length() > 32 ? cleaned.substring(0, 32) : cleaned);
 
-        notifyStatus("Connecting to ws://" + host + ":" + port + "...");
+        notifyStatus("Connecting to " + host + ":" + port + "...");
         // Pass aeOriginator (not raw aeId) so NetworkManager sends the correct
         // X-M2M-Origin header in the WebSocket upgrade request.
         transport.connect(host, port, aeOriginator);
@@ -333,6 +334,26 @@ public class OneM2MSession implements ProtocolClient, DroneCommandListener {
     @Override
     public void setCommandLogListener(ProtocolClient.CommandLogListener listener) {
         this.commandLogListener = listener;
+    }
+
+    /**
+     * No-op para a camada de sessão — {@code OneM2MSession} gere o listener interno
+     * de mensagens raw em {@link #setTransport}; nenhum componente externo deve
+     * chamar este método directamente na sessão.
+     */
+    @Override
+    public void setRawMessageListener(ProtocolClient.RawMessageListener listener) {
+        // Intentionally empty: session layer handles raw messages via setTransport()
+    }
+
+    /**
+     * Delega ao transporte activo — o URL de PoA é determinado pelo transport concreto.
+     *
+     * @return URL do poa do transport activo, ou string vazia se não houver transport
+     */
+    @Override
+    public String getPoaUrl() {
+        return transport != null ? transport.getPoaUrl() : "";
     }
 
     /**
@@ -391,10 +412,23 @@ public class OneM2MSession implements ProtocolClient, DroneCommandListener {
             // Flat format: response has "rsc" at top level
             if (obj.has("rsc")) {
                 handleResponse(obj);
-            // Flat format: notification has "op": 5 at top level
+            // WS/MQTT: notification has "op": 5 at top level (flat format)
             } else if (obj.optInt("op", 0) == OP_NOTIFY) {
                 handleNotification(obj);
-                sendNotifyAck(obj.optString("rqi", ""));
+                if (transport.requiresExplicitNotifyAck()) {
+                    sendNotifyAck(obj.optString("rqi", ""));
+                }
+            // HTTP/CoAP: notification delivered directly as {"m2m:sgn":{...}} body
+            // ACK is the HTTP 200 / CoAP 2.04 Changed from the callback server — no JSON needed
+            } else if (obj.has("m2m:sgn")) {
+                // Wrap into the same structure handleNotification() expects
+                JSONObject wrapped = new JSONObject()
+                        .put("op", OP_NOTIFY)
+                        .put("pc", obj);
+                // Skip vrq (verification request) — no ACK to send for HTTP/CoAP
+                JSONObject sgn = obj.optJSONObject("m2m:sgn");
+                if (sgn != null && sgn.optBoolean("vrq", false)) return;
+                handleNotification(wrapped);
             }
         } catch (JSONException e) {
             Log.e(TAG, "onRawMessage: " + e.getMessage());
@@ -454,7 +488,8 @@ public class OneM2MSession implements ProtocolClient, DroneCommandListener {
                     .put("rqi", rqi)
                     .put("to",  aeOriginator)
                     .put("fr",  aeOriginator);
-            transport.sendTelemetry(ack.toString());
+            // sendAck() routes to TOPIC_RESP for MQTT; delegates to sendTelemetry() for WS
+            transport.sendAck(ack.toString());
         } catch (JSONException e) {
             Log.e(TAG, "sendNotifyAck: " + e.getMessage());
         }
@@ -587,12 +622,11 @@ public class OneM2MSession implements ProtocolClient, DroneCommandListener {
     private void registerAE() {
         notifyStatus("Registering AE (" + aeOriginator + ")...");
         try {
-            // poa (Point of Access) = CSE WebSocket address.
+            // poa (Point of Access) = transport-specific callback URL.
             // REQUIRED for notification delivery: without poa the CSE discards all
             // subscription notifications silently (no poa → no delivery route).
-            // The CSE uses this URL to route notifications; since our WS connection
-            // is already associated with aeOriginator, it reuses the existing socket.
-            String wsPoA = "ws://" + savedHost + ":" + savedPort;
+            // Each transport implements getPoaUrl() to return the correct scheme/address.
+            String poa = transport.getPoaUrl();
             JSONObject pc = new JSONObject()
                     .put("m2m:ae", new JSONObject()
                             .put("rn",  AE_NAME)
@@ -600,7 +634,7 @@ public class OneM2MSession implements ProtocolClient, DroneCommandListener {
                             // aei NOT included — non-provision attribute in v2025.11
                             .put("srv", new JSONArray().put("3"))
                             .put("rr",  true)
-                            .put("poa", new JSONArray().put(wsPoA)));
+                            .put("poa", new JSONArray().put(poa)));
             // to = CSE_ID ("id-in") — CSE-relative identifier of the CSE-Base
             sendRequest(OP_CREATE, CSE_ID, TY_AE, pc, this::createTelemetryContainer);
         } catch (JSONException e) { Log.e(TAG, "registerAE: " + e.getMessage()); }
@@ -726,7 +760,8 @@ public class OneM2MSession implements ProtocolClient, DroneCommandListener {
             if (!shouldReconnect || transport == null) return;
             notifyStatus("Reconnecting...");
             pending.clear();
-            transport.connect(savedHost, savedPort, savedAeId);
+            // Pass aeOriginator (not savedAeId) — CSE expects "C"+serial, not raw serial
+            transport.connect(savedHost, savedPort, aeOriginator);
         }, delay, TimeUnit.SECONDS);
     }
 
