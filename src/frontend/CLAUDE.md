@@ -1,0 +1,172 @@
+# CLAUDE.md — Streamlit Dashboard (`src/frontend/`)
+
+> Guia de arquitectura, convenções e integração para o frontend do benchmark OneM2M.
+> Lê este ficheiro antes de tocar em qualquer coisa em `src/frontend/`.
+> Complementa `docs/ai-context/frontend-dev.md` e `docs/ai-context/project-context.md`.
+
+---
+
+## Stack e Ambiente
+
+```
+src/frontend/
+├── app.py                  ← entry point: python -m streamlit run app.py
+├── pages/
+│   ├── 1_manual.py         ← controlo manual + telemetria em directo
+│   ├── 2_benchmark.py      ← orquestrador de runs automatizados
+│   └── 3_results.py        ← visualização rápida do último run
+├── core/
+│   ├── config.py           ← Config dataclass; carrega .env com python-dotenv
+│   ├── logger.py           ← MetricRecord + save_run() → data/raw/
+│   ├── orchestrator.py     ← RunConfig + run_scenario_1/2/3(); background thread
+│   └── protocols/
+│       ├── base.py         ← ProtocolClient (ABC)
+│       ├── websocket_client.py
+│       ├── mqtt_client.py
+│       ├── http_client.py
+│       └── coap_client.py
+├── requirements.txt        ← dependências pinadas (ver abaixo)
+└── .env.example            ← template; copiar para .env (git-ignored)
+```
+
+**Activar o ambiente antes de qualquer comando Python:**
+
+```bash
+# Windows (PowerShell)
+.venv\Scripts\Activate.ps1
+# Linux / WSL / Git Bash
+source .venv/bin/activate
+```
+
+**Iniciar a app:**
+
+```bash
+python -m streamlit run app.py
+```
+
+---
+
+## Configuração
+
+Todos os parâmetros vêm de variáveis de ambiente (ou ficheiro `.env`). Nunca hardcoded.
+Copiar `.env.example` para `.env` e preencher com os IPs reais da LAN.
+
+| Variável | Default | Notas |
+|---|---|---|
+| `CSE_HOST` | `127.0.0.1` | IP LAN da máquina a correr `docker compose up` |
+| `CSE_HTTP_PORT` | `8080` | HTTP binding do ACME CSE |
+| `CSE_MQTT_PORT` | `1883` | Broker Mosquitto |
+| `CSE_WS_PORT` | `8180` | WebSocket binding do ACME CSE |
+| `CSE_COAP_PORT` | `5683` | CoAP binding do ACME CSE (UDP) |
+| `DATA_RAW_DIR` | `../../data/raw` | Relativo a `src/frontend/` |
+| `CALLBACK_HOST` | `127.0.0.1` | **IP LAN desta máquina** (não 127.0.0.1 em LAN real — Docker não alcança loopback) |
+| `CALLBACK_HTTP_PORT` | `8090` | Servidor HTTP embutido para notificações (HTTP transport) |
+| `CALLBACK_COAP_PORT` | `5684` | Servidor CoAP embutido para notificações (CoAP transport) |
+
+---
+
+## Originators OneM2M
+
+| Transport | Originator | AE registration? |
+|---|---|---|
+| WebSocket | `CStreamlit` | Sim — `poa=["ws://host:8180"]` |
+| MQTT | `CStreamlit` | Sim — `poa=["mqtt://host:1883"]` |
+| HTTP | `CAdmin` | Não — CAdmin é admin, não precisa de registo |
+| CoAP | `CAdmin` | Não — idem |
+
+---
+
+## Tópicos MQTT (CStreamlit)
+
+| Tópico | Direcção | Descrição |
+|---|---|---|
+| `/oneM2M/req/CStreamlit/id-in/json` | Streamlit → CSE | Requests (create CIN, subscribe, etc.) |
+| `/oneM2M/resp/CStreamlit/id-in/json` | CSE → Streamlit | Respostas aos requests |
+| `/oneM2M/req/id-in/CStreamlit/json` | CSE → Streamlit | Notificações push (SUB deliveries) |
+
+> **Atenção:** request/response têm ordem `{originator}/{cseID}`; notificações invertem para `{cseID}/{originator}`.
+
+---
+
+## Árvore de Recursos OneM2M
+
+```
+/id-in                        ← CSE-Base (GET /id-in para health check)
+/cse-in/uxv                   ← AE (criado pela app Android)
+/cse-in/uxv/telemetry         ← CNT mni=10 — Streamlit subscreve (Cenário 1)
+/cse-in/uxv/commands          ← CNT mni=5  — Streamlit envia comandos aqui (Cenário 2)
+/cse-in/uxv/commands/sub-commands  ← SUB — notifica a app Android
+/cse-in/uxv/ack               ← CNT mni=200 — Streamlit subscreve ACKs (Cenário 2)
+```
+
+> **Nota de startup:** Streamlit deve iniciar **após** a app Android se registar.
+> `_ensure_subscription()` falha se os containers (`telemetry`, `ack`) ainda não existirem.
+
+---
+
+## Interface ProtocolClient
+
+Todos os clientes implementam a mesma ABC (`core/protocols/base.py`):
+
+```python
+class ProtocolClient(ABC):
+    def connect(self) -> None: ...
+    def send_command(self, payload: dict) -> tuple[float, bool]: ...
+    def subscribe_telemetry(self, callback: Callable[[dict], None]) -> None: ...
+    def subscribe_ack(self, callback: Callable[[dict], None]) -> None: ...
+    def disconnect(self) -> None: ...
+    def get_header_bytes(self, payload: dict) -> int: ...
+```
+
+O orquestrador é protocol-agnostic — só instancia a classe certa conforme `RunConfig.protocol`.
+
+---
+
+## Métricas (MetricRecord)
+
+Um `MetricRecord` por mensagem → escrito em CSV em `data/raw/`.
+
+| Campo | Tipo | NTP-dep? | Notas |
+|---|---|---|---|
+| `latency_ms` | float\|None | **Sim** | S1: `timestamp_ms − t_send_ms`; S2: `t_recv_ms − t_cmd_ms` (dois relógios: dev + RC) |
+| `cin_create_ms` | float\|None | Não | S2: RTT Streamlit→CSE (monotónico, mesmo dispositivo) |
+| `payload_bytes` | int | — | Bytes no campo `con` do CIN |
+| `header_bytes` | int | — | Overhead do protocolo |
+| `delivered` | bool | — | True se ACK recebido dentro do timeout |
+| `seq` | int | — | Contador monotónico do Android; gaps = packet loss |
+
+---
+
+## Problemas Conhecidos
+
+| Problema | Estado |
+|---|---|
+| CoAP `send_command()` envia `{"m2m:cin": {"con": ...}}` em vez de flat JSON | **Não corrigir sem teste e2e** — ACME CSE v2025.11 CoAP binding pode exigir flat JSON com campos `op`, `fr`, `rvi` |
+| HTTP/CoAP callbacks inacessíveis se `CALLBACK_HOST=127.0.0.1` | Usar IP LAN real quando CSE corre em Docker Desktop na mesma máquina |
+| `_ensure_subscription()` falha se Android ainda não se registou | Iniciar Streamlit depois da app Android |
+
+---
+
+## Dependências (requirements.txt)
+
+```
+streamlit==1.45.1
+paho-mqtt==2.1.0
+websockets==13.1
+aiocoap==0.4.8
+requests==2.32.3
+python-dotenv==1.0.1
+pandas==2.2.2
+plotly==5.22.0
+```
+
+Versões pinadas para reprodutibilidade (requisito do artigo académico).
+
+---
+
+## Referências
+
+- `docs/ai-context/frontend-dev.md` — contexto de desenvolvimento completo
+- `docs/ai-context/cse-dev.md` — integração com ACME CSE v2025.11
+- `docs/ai-context/project-context.md` — contexto completo do projecto
+- `src/android/CLAUDE.md` — app Android (contraparte do benchmark)

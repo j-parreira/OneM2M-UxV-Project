@@ -47,12 +47,18 @@ All connection parameters come from environment variables (or a `.env` file). Ne
 
 ```env
 # .env.example
-CSE_HOST=192.168.1.100     # LAN IP of the dev machine running Docker
+CSE_HOST=192.168.1.100       # LAN IP of the dev machine running Docker
 CSE_HTTP_PORT=8080
 CSE_MQTT_PORT=1883
 CSE_WS_PORT=8180
 CSE_COAP_PORT=5683
 DATA_RAW_DIR=../../data/raw
+
+# HTTP/CoAP callback — this machine's LAN IP as reachable by the CSE Docker container.
+# Do NOT use 127.0.0.1: Docker containers cannot reach the host loopback.
+CALLBACK_HOST=192.168.1.100  # same LAN IP as CSE_HOST (dev machine WiFi IP)
+CALLBACK_HTTP_PORT=8090      # embedded HTTP server port (NanoHTTPD equivalent in Python)
+CALLBACK_COAP_PORT=5684      # embedded CoAP server port (aiocoap)
 ```
 
 `core/config.py` loads these with `python-dotenv` and exposes a single `Config` dataclass.
@@ -99,11 +105,13 @@ converted to milliseconds — not `time.time()`, which can jump due to NTP.
 - Latency: Streamlit records `t_cmd_ms`; Android sends back `t_recv_ms` in ACK CIN
 
 ### MQTT client
-- Publish commands to `/oneM2M/req/CAdmin/id-in/json` (request topic)
-- Subscribe to `/oneM2M/resp/CAdmin/id-in/json` (response topic)
+- Originator: `CStreamlit` (AE registered with `poa=[mqtt://host:1883]`)
+- Publish commands to `/oneM2M/req/CStreamlit/id-in/json` (request topic)
+- Subscribe to `/oneM2M/resp/CStreamlit/id-in/json` (response topic for CSE → Streamlit)
+- Subscribe to `/oneM2M/req/id-in/CStreamlit/json` (notification topic for CSE push)
 - Subscribe to ack CINs via separate subscription on `/cse-in/uxv/ack`
 - Telemetry: subscribe to `/cse-in/uxv/telemetry` via separate oneM2M subscription
-- Note: topic format is `{originator}/{cseID}` (originator first) — confirmed empirically
+- Note: request/response topics have `{originator}/{cseID}` order; notification topics reverse to `{cseID}/{originator}` — confirmed empirically
 
 ### WebSocket client
 - Connect to `ws://{CSE_HOST}:{CSE_WS_PORT}/`
@@ -221,7 +229,7 @@ The Android app has been reviewed and tested. Key facts for the Streamlit fronte
 {"command": "takeoff", "seq_cmd": 1, "t_cmd_ms": 1748000000000,
  "t_recv_ms": 1748000000087, "t_exec_ms": 1748000000092}
 ```
-- Latency = `t_recv_ms - t_cmd_ms` (device-to-device, no NTP dependency)
+- Latency = `t_recv_ms - t_cmd_ms` (**NTP-dependent**: `t_cmd_ms` is dev machine clock; `t_recv_ms` is Android RC clock — two separate devices)
 
 **Telemetry rate control** (Scenario 1):
 ```json
