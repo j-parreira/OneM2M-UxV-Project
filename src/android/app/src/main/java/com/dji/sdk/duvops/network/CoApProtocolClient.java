@@ -272,7 +272,8 @@ public class CoApProtocolClient implements ProtocolClient {
      */
     @Override
     public String getPoaUrl() {
-        return "coap://" + (wifiIp != null ? wifiIp : "0.0.0.0") + ":" + CALLBACK_PORT;
+        // /notify path is required — Californium CoapServer has no catch-all handler
+        return "coap://" + (wifiIp != null ? wifiIp : "0.0.0.0") + ":" + CALLBACK_PORT + "/notify";
     }
 
     /**

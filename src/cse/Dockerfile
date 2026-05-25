@@ -7,7 +7,7 @@
 #   docker compose up --build
 #
 # Manual smoke test after startup:
-#   curl http://localhost:8080/onem2m
+#   curl http://localhost:8080/id-in -H "X-M2M-Origin: CAdmin" -H "X-M2M-RI: t" -H "X-M2M-RVI: 3"
 
 FROM python:3.11-slim
 

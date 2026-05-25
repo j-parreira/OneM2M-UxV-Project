@@ -143,7 +143,7 @@ The `acme-cse` container has a built-in Docker healthcheck:
 docker compose ps
 
 # Manual check
-curl -s http://localhost:8080/onem2m | python3 -m json.tool
+curl http://localhost:8080/id-in -H "X-M2M-Origin: CAdmin" -H "X-M2M-RI: t" -H "X-M2M-RVI: 3"
 ```
 
 Expected response body contains `"ty": 5` (resource type = CSE-Base).

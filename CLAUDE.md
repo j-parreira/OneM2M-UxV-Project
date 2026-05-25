@@ -189,7 +189,7 @@ Subscription notification target (`nu`) = AE originator (`C<serial>` for Android
 | WebSocket | CSE reuses active WS connection (same originator in `associatedConnections`) | `["ws://cse_ip:8180"]` |
 | MQTT | CSE publishes to `/oneM2M/req/id-in/{originator}/json`; AE subscribes | `["mqtt://cse_ip:1883"]` |
 | HTTP | CSE POSTs to Android's callback URL; **Android must embed HTTP server** | `["http://rc_ip:callback_port"]` |
-| CoAP | CSE sends CoAP PUT to Android's callback; **Android must embed CoAP server** | `["coap://rc_ip:callback_port"]` |
+| CoAP | CSE sends CoAP PUT to Android's callback; **Android must embed CoAP server** | `["coap://rc_ip:callback_port/notify"]` |
 
 > **HTTP/CoAP reachability:** The CSE Docker container must be able to reach the Android RC's
 > LAN IP. Both must be on the same WiFi network. The `rc_ip` and `callback_port` are

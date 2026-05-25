@@ -249,7 +249,7 @@ CIN send: Californium 2.7.4 CON POST assíncrono para coap://cse_ip:5683/{to}
           Body: flat JSON completo (igual ao WS binding — sem URI query params)
           Content-Format: 50 (application/json)
           sharedEndpoint (porta efémera) reutilizado entre requests — sem criar socket por send
-AE poa:  ["coap://rc_ip:5684"]   ← IP WiFi do RC, porta fixa 5684 (UDP)
+AE poa:  ["coap://rc_ip:5684/notify"]   ← IP WiFi do RC, porta fixa 5684, path /notify (UDP)
 Notificações: CoapServer (Californium) na porta 5684 UDP, resource /notify
               CSE envia POST/PUT com {"m2m:sgn":{...}}
               ACK: CoAP 2.04 Changed (requiresExplicitNotifyAck = false)
@@ -550,7 +550,7 @@ O `protocolClient` (= session) nunca muda — apenas o transport interno.
 | Transport | ACK explícito | Formato notificação | Thread do callback |
 |---|---|---|---|
 | WebSocket | Sim (`sendAck` = `sendTelemetry`) | `{"op":5,"pc":{"m2m:sgn":{...}}}` | OkHttp callback |
-| MQTT | Sim (`sendAck` publica TOPIC_RESP) | `{"m2m:sgn":{...}}` directo | Paho callback |
+| MQTT | Sim (`sendAck` publica TOPIC_RESP) | `{"op":5,"pc":{"m2m:sgn":{...}}}` flat | Paho callback |
 | HTTP | Não (HTTP 200 = ACK) | `{"m2m:sgn":{...}}` directo | NanoHTTPD thread |
 | CoAP | Não (2.04 Changed = ACK) | `{"m2m:sgn":{...}}` directo | Californium thread |
 

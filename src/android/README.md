@@ -120,7 +120,7 @@ Each registration request has a **10-second timeout**. If the CSE does not respo
 
 ## Telemetry (Uplink — Scenario 1)
 
-The app sends a `m2m:cin` to `/id-in/uxv/telemetry` at a configurable rate (default 250 ms). The JSON payload in the `con` field:
+The app sends a `m2m:cin` to `cse-in/uxv/telemetry` at a configurable rate (default 250 ms). The JSON payload in the `con` field:
 
 ```json
 {
@@ -162,13 +162,13 @@ Rates: `1000` ms = 1 msg/s · `200` ms = 5 msg/s · `100` ms = 10 msg/s
 
 ## Commands (Downlink — Scenario 2)
 
-The Streamlit dashboard creates a `m2m:cin` in `/id-in/uxv/commands`. The `con` field contains:
+The Streamlit dashboard creates a `m2m:cin` in `cse-in/uxv/commands`. The `con` field contains:
 
 ```json
 {"command": "takeoff", "t_cmd_ms": 1748000000000, "seq_cmd": 1}
 ```
 
-The app receives the command via OneM2M push notification, executes it, and posts an **ACK** to `/id-in/uxv/ack`:
+The app receives the command via OneM2M push notification, executes it, and posts an **ACK** to `cse-in/uxv/ack`:
 
 ```json
 {
@@ -277,7 +277,7 @@ All 4 transports are implemented. The spinner in the `DuvopsView` top bar select
 | WebSocket | `NetworkManager` | 8180 | `ws://cse_ip:8180` | CSE reuses active WS connection |
 | MQTT | `MqttProtocolClient` | 1883 | `mqtt://cse_ip:1883` | Broker publishes to `TOPIC_NOTIF` |
 | HTTP | `HttpProtocolClient` | 8080 | `http://rc_ip:8181` | CSE POSTs to embedded NanoHTTPD |
-| CoAP | `CoApProtocolClient` | 5683 | `coap://rc_ip:5684` | CSE sends CON POST to embedded Californium server |
+| CoAP | `CoApProtocolClient` | 5683 | `coap://rc_ip:5684/notify` | CSE sends CON POST to embedded Californium server |
 
 `OneM2MSession` is protocol-agnostic — registration sequence, telemetry wrapping, ACK sending, and reconnect are all unchanged across transports.
 
@@ -286,7 +286,7 @@ All 4 transports are implemented. The spinner in the `DuvopsView` top bar select
 | | WS ACK | MQTT ACK | HTTP ACK | CoAP ACK |
 |---|---|---|---|---|
 | `requiresExplicitNotifyAck()` | `true` | `true` | `false` | `false` |
-| Notification format | `{"op":5,"pc":{"m2m:sgn":{...}}}` | `{"m2m:sgn":{...}}` | `{"m2m:sgn":{...}}` | `{"m2m:sgn":{...}}` |
+| Notification format | `{"op":5,"pc":{"m2m:sgn":{...}}}` | `{"op":5,"pc":{"m2m:sgn":{...}}}` | `{"m2m:sgn":{...}}` | `{"m2m:sgn":{...}}` |
 | ACK sent via | `sendTelemetry()` → TOPIC_REQ | `sendAck()` → TOPIC_RESP | HTTP 200 (implicit) | CoAP 2.04 (implicit) |
 
 ---

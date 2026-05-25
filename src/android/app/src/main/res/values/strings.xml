@@ -1,6 +1,6 @@
 <resources>
     <!-- App name — used in AndroidManifest and ActionBar -->
-    <string name="sample_app_name">UxV Benchmark</string>
+    <string name="sample_app_name">DuvOps</string>
     <string name="action_settings">Settings</string>
 
     <!-- SDK version display (MainContent.text_version) -->
