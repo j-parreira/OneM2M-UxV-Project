@@ -183,10 +183,22 @@ public class NetworkManager implements ProtocolClient {
 
     /**
      * Fecha a ligação WebSocket se estiver aberta.
+     *
+     * <p>Incrementa {@link #wsGeneration} ANTES do {@code ws.close()} para que os
+     * callbacks {@code onClosing}/{@code onClosed}/{@code onFailure} deste socket —
+     * e de qualquer TCP connect ainda em flight (ex: tentativa ao IP antigo com
+     * timeout de 10 s) — sejam descartados pelo {@link #notifyConnectionChange} do
+     * NetworkManager que os criou, mesmo após este ser substituído por um novo transporte.
      */
     @Override
     public void disconnect() {
         connected = false;
+        // Invalidate all pending SocketListener callbacks before closing the socket.
+        // Critical for the cross-NM case: when a new NetworkManager replaces this one,
+        // any in-flight TCP connects (e.g. old IP with 10 s timeout) still reference
+        // THIS object. Incrementing here ensures those late onFailure callbacks are
+        // dropped even though they match the old wsGeneration.
+        wsGeneration++;
         if (ws != null) {
             ws.close(1000, "App closing");
             ws = null;
