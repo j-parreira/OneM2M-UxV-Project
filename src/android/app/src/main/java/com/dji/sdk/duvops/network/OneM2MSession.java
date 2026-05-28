@@ -112,6 +112,16 @@ public class OneM2MSession implements ProtocolClient, DroneCommandListener {
     private static final int RSC_CREATED  = 2001;
     /** Recurso já existe — tratado como sucesso para permitir reconnect. */
     private static final int RSC_CONFLICT = 4105;
+    /**
+     * ACME CSE v2025.11 — originator already registered on a WebSocket connection.
+     *
+     * <p>Returned by the CSE instead of 4105 when the AE resource already exists AND
+     * the CSE still considers the originator as having an active/registered WS session
+     * (e.g. previous connection not gracefully closed). The new WS IS established and
+     * the CSE will process subsequent requests; re-registration is simply not needed.
+     * Treat the same as 4105: skip AE creation and proceed to resource setup.
+     */
+    private static final int RSC_ORIGINATOR_ALREADY_REGISTERED = 4117;
 
     // ── Tempo de timeout por request (segundos) ───────────────────────────────
     private static final int REQUEST_TIMEOUT_S    = 10;
@@ -476,7 +486,8 @@ public class OneM2MSession implements ProtocolClient, DroneCommandListener {
         if (timeoutFuture != null) timeoutFuture.cancel(false);
 
         Runnable callback = pending.remove(rqi);
-        boolean ok = (rsc == RSC_CREATED || rsc == RSC_OK || rsc == RSC_CONFLICT);
+        boolean ok = (rsc == RSC_CREATED || rsc == RSC_OK
+                || rsc == RSC_CONFLICT || rsc == RSC_ORIGINATOR_ALREADY_REGISTERED);
 
         if (callback != null && ok) {
             callback.run();

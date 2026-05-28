@@ -321,6 +321,7 @@ o mesmo originator em `associatedConnections`, reutiliza-a.
 - AE registration usa `rr=true` (reachable resource) — necessário para notificações WS
 - Containers criados com `mni=10` (telemetry) e `mni=5` (commands)
 - Conflito (rsc 4105) é tratado como sucesso — permite reconnect sem limpeza do CSE
+- rsc 4117 (`ORIGINATOR_ALREADY_REGISTERED`) também tratado como sucesso — ACME CSE v2025.11 retorna isto quando o AE já existe e a ligação WS anterior não foi encerrada graciosamente; o CSE processa os requests subsequentes normalmente
 - Notificações chegam como `m2m:rqp` com `op=5` — ACK obrigatório (enviado em `sendNotifyAck()`)
 - `OneM2MSession.sendTelemetry()` é fire-and-forget — respostas de CIN ignoradas
 
