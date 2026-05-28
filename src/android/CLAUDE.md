@@ -173,21 +173,23 @@ connect(host, 8180, serialNumber)
 
 ## Estado da Implementação Multi-Protocolo
 
-### Completo ✅ (2026-05-24)
+### Completo ✅ (2026-05-25)
 | Item | Notas |
 |---|---|
 | Campos `seq` + `t_send_ms` na telemetria | — |
-| Reconnect automático com backoff | 1s→30s |
+| Reconnect automático com backoff | 1s→30s; `reconnectPending` flag evita reconnect storm |
+| Guard `\|\| ready` no lambda de reconnect | Evita reconnect duplo se connect() succeeds durante o backoff |
+| Protocol switch resource leak fix | `session.disconnect()` antes de `setTransport()` em `connectToCse()` |
 | Timeout na registration sequence | 10s/request |
 | Command ACK (`cse-in/uxv/ack`) | `{command, seq_cmd, t_cmd_ms, t_recv_ms, t_exec_ms}` |
 | Configurable telemetry rate (`setTelemetryRate`) | — |
 | Estado do drone na UI | droneStateField |
 | WebSocket transport (`NetworkManager.java`) | Testado end-to-end contra ACME CSE v2025.11 |
 | `ProtocolClient` interface | Refactored: `getPoaUrl()`, `requiresExplicitNotifyAck()`, `sendAck()`, `RawMessageListener` |
-| `OneM2MSession` (decorator) | Protocol-agnostic; partilhado pelos 4 transportes; bug fix reconnect |
+| `OneM2MSession` (decorator) | Protocol-agnostic; partilhado pelos 4 transportes; reconnect storm fix |
 | `MqttProtocolClient` | Paho 1.2.5; TOPIC_REQ/RESP/NOTIF; ACK via TOPIC_RESP (override) |
 | `HttpProtocolClient` | OkHttp async POST + NanoHTTPD 2.3.1 callback (porta 8181) |
-| `CoApProtocolClient` | Californium 2.7.4 CON POST + CoapServer callback (porta 5684) |
+| `CoApProtocolClient` | Californium 2.7.4 CON POST + CoapServer callback (porta 5684); CONFLICT case adicionado |
 | Protocol selector spinner | Spinner na barra superior: WebSocket / MQTT / HTTP / CoAP |
 
 ### Pendente 🔜 (para benchmark)
@@ -492,12 +494,17 @@ o mesmo originator em `associatedConnections`, reutiliza-a.
 | Video feed morre após 500 ms no simulator | Testar apenas no device físico |
 | Virtual sticks derivam em missões longas | PID tuning a cada 200 ms (não mais rápido) |
 | Zoom indisponível em modo IR | Verificar stream antes do comando zoom |
-| WebSocket desliga quando RC entra em sleep | Reconnect automático implementado (backoff 1 s→30 s) |
+| WebSocket desliga quando RC entra em sleep | Reconnect automático com backoff 1 s→30 s — já corrigido |
+| Reconnect storm (onClosing+onClosed+onFailure) | `reconnectPending` volatile flag em `scheduleReconnect()` — já corrigido |
+| Spurious reconnect quando connect() chama disconnect() | Guard `\|\| ready` no lambda de reconnect — já corrigido |
+| Resource leak ao trocar protocolo no spinner | `session.disconnect()` antes de `setTransport()` — já corrigido |
 | Câmara térmica requer mudança de modo | Definir cameraMode antes do zoom |
 | Gimbal pitch fora de range em algumas missões | Clamp pitch para [-90,30] antes de enviar |
 | Notificações não chegam sem `poa` | `poa=['ws://host:port']` obrigatório no registo AE — já corrigido |
 | `nu='/id-in/uxv'` não entregava notificações | `nu=aeOriginator` correcto — já corrigido |
 | HTTP paths incorrectos `/id-in/...` | Paths corrector: `/cse-in/...` — já corrigido em CSE_BASE |
+| CoAP `CONFLICT` (4.09) não mapeado | `case CONFLICT: return 4105` adicionado; `Log.d` para verificação empírica — já corrigido |
+| `WifiManager.getConnectionInfo()` deprecated | `@SuppressWarnings("deprecation")` em HTTP e CoAP — RC usa API ≤ 29, funciona |
 
 ---
 
@@ -530,7 +537,7 @@ app/src/main/java/com/dji/sdk/duvops/
 
 ---
 
-## Arquitectura Multi-Protocolo — Estado Actual (2026-05-24)
+## Arquitectura Multi-Protocolo — Estado Actual (2026-05-25)
 
 Todos os 4 transportes estão implementados. O fluxo de selecção é:
 

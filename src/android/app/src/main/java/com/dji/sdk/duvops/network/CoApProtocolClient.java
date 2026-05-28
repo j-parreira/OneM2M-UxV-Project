@@ -291,27 +291,38 @@ public class CoApProtocolClient implements ProtocolClient {
     /**
      * Mapeia código de resposta CoAP para código de resposta oneM2M (rsc).
      *
+     * <p>ACME CSE v2025.11 tipicamente devolve flat JSON com {@code rsc} no body —
+     * este mapeamento é usado apenas quando o body está vazio ou sem campo {@code rsc}.
+     * O {@code Log.d} abaixo permite verificar empiricamente o que o CSE envia.
+     *
      * @param code código de resposta Californium
      * @return rsc oneM2M correspondente
      */
     private int mapCoapCodeToRsc(CoAP.ResponseCode code) {
         if (code == null) return 0;
+        // Diagnóstico: log do código raw para verificação empírica contra ACME CSE v2025.11
+        Log.d(TAG, "CoAP response code: " + code + " (value=" + code.value + ")");
         switch (code) {
-            case CREATED:  return 2001;
-            case CHANGED:  return 2004;
-            case DELETED:  return 2002;
-            case CONTENT:  return 2000;
-            // 4.09 Conflict não existe em CoAP standard — ACME pode retornar 4.03 Forbidden
-            case FORBIDDEN: return 4105; // tratar como Conflict (AE/recurso já existe)
-            default:       return 5000;  // erro genérico
+            case CREATED:   return 2001;
+            case CHANGED:   return 2004; // 2.04 — verificar empiricamente se CSE usa flat JSON
+            case DELETED:   return 2002;
+            case CONTENT:   return 2000;
+            case CONFLICT:  return 4105; // 4.09 — ACME CSE: recurso já existe
+            // 4.03 Forbidden — ACME CSE pode enviar este em vez de 4.09 para recursos existentes
+            case FORBIDDEN: return 4105;
+            default:        return 5000; // erro genérico
         }
     }
 
     /**
      * Obtém o endereço IP do RC na rede WiFi.
      *
+     * <p>{@code WifiManager.getConnectionInfo()} está deprecated desde API 31, mas o RC
+     * corre Android ≤ API 29 pelo que a API está disponível e funcional neste target.
+     *
      * @return IP no formato dotted-decimal, ou "0.0.0.0" se não disponível
      */
+    @SuppressWarnings("deprecation")
     private String getWifiIpAddress() {
         try {
             WifiManager wm = (WifiManager) context.getApplicationContext()

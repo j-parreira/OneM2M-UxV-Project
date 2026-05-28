@@ -328,7 +328,9 @@ public class TelemetryManager {
                     batteryPercent = state.getChargeRemainingInPercent();
                     batteryTemp = (float) state.getTemperature();
                     batteryCharging = state.isBeingCharged();
-                    batteryConnectionState = state.getConnectionState().toString();
+                    // getConnectionState() can return null on initial callback — guard before toString()
+                    batteryConnectionState = state.getConnectionState() != null
+                            ? state.getConnectionState().toString() : "UNKNOWN";
                     // Campos adicionais extraidos do BatteryState push data
                     batteryVoltage = state.getVoltage();       // mV
                     batteryCurrent = state.getCurrent();        // mA

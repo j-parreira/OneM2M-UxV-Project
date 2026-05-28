@@ -145,7 +145,10 @@ public class NetworkManager implements ProtocolClient {
         this.serverUrl = "ws://" + host + ":" + port;
         this.droneId = aeId;
 
-        notifyConnectionChange(false, "Connecting to " + serverUrl + "...");
+        // Do NOT call notifyConnectionChange(false,...) here: that would fire
+        // onConnectionStatusChange(false) while shouldReconnect=true, triggering
+        // an immediate spurious scheduleReconnect(). OneM2MSession already calls
+        // notifyStatus("Connecting to...") which updates the UI without side-effects.
 
         OkHttpClient client = new OkHttpClient();
         Request request = new Request.Builder()

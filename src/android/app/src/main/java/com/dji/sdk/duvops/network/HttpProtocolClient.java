@@ -294,9 +294,12 @@ public class HttpProtocolClient implements ProtocolClient {
      * Obtém o endereço IP do RC na rede WiFi.
      *
      * <p>Os bytes do IP no Android estão em little-endian (LSB primeiro).
+     * {@code WifiManager.getConnectionInfo()} está deprecated desde API 31, mas o RC
+     * corre Android ≤ API 29 pelo que a API está disponível e funcional neste target.
      *
      * @return IP no formato dotted-decimal, ou "0.0.0.0" se não disponível
      */
+    @SuppressWarnings("deprecation")
     private String getWifiIpAddress() {
         try {
             WifiManager wm = (WifiManager) context.getApplicationContext()

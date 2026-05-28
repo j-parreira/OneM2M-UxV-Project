@@ -181,6 +181,24 @@ public class OneM2MSession implements ProtocolClient, DroneCommandListener {
     /** Delay actual do backoff (dobra a cada falha, máx. {@value MAX_RECONNECT_DELAY_S} s). */
     private int reconnectDelayS = 1;
 
+    /**
+     * {@code true} quando há um reconnect já agendado no scheduler.
+     *
+     * <p>Evita "reconnect storm": sem esta flag, cada callback de falha (onClosing,
+     * onClosed, onFailure) agenda um reconnect independente — N falhas → N tasks
+     * em paralelo → N novas ligações → N² mais falhas → {@code Too many open files}.
+     */
+    private volatile boolean reconnectPending = false;
+
+    /**
+     * Future do último task de reconnect agendado.
+     *
+     * <p>Guardado para poder cancelar o task quando {@link #disconnect()} ou
+     * {@link #connect} são chamados antes do delay expirar — evita que tasks
+     * de sessões anteriores disparem sobre uma nova sessão activa.
+     */
+    private ScheduledFuture<?> reconnectFuture;
+
     /** Parâmetros guardados para reconectar sem input do utilizador. */
     private String savedHost;
     private int savedPort;
@@ -271,6 +289,9 @@ public class OneM2MSession implements ProtocolClient, DroneCommandListener {
     public void connect(String host, int port, String aeId) {
         shouldReconnect = true;
         reconnectDelayS = 1;
+        // Cancel any reconnect task from a previous session — prevents a task
+        // scheduled on the old session from firing into the new one.
+        cancelReconnectFuture();
         savedHost = host;
         savedPort = port;
         savedAeId = aeId;
@@ -294,6 +315,8 @@ public class OneM2MSession implements ProtocolClient, DroneCommandListener {
     @Override
     public void disconnect() {
         shouldReconnect = false;
+        reconnectPending = false;
+        cancelReconnectFuture();
         ready = false;
         pending.clear();
         cancelAllTimeouts();
@@ -363,6 +386,8 @@ public class OneM2MSession implements ProtocolClient, DroneCommandListener {
      */
     public void shutdown() {
         shouldReconnect = false;
+        reconnectPending = false;
+        cancelReconnectFuture();
         ready = false;
         pending.clear();
         cancelAllTimeouts();
@@ -750,14 +775,26 @@ public class OneM2MSession implements ProtocolClient, DroneCommandListener {
      * que a próxima sessão começa limpa.
      */
     private void scheduleReconnect() {
+        // Guard: only one reconnect task queued at a time — prevents reconnect storm
+        // where multiple failure callbacks (onClosing + onClosed + onFailure) each
+        // schedule their own reconnect, producing exponential thread explosion.
+        if (reconnectPending) return;
+        reconnectPending = true;
         pending.clear();
         cancelAllTimeouts();
         int delay = reconnectDelayS;
         reconnectDelayS = Math.min(reconnectDelayS * 2, MAX_RECONNECT_DELAY_S);
         notifyStatus("Reconnecting in " + delay + "s...");
-        if (scheduler.isShutdown()) return;
-        scheduler.schedule(() -> {
-            if (!shouldReconnect || transport == null) return;
+        if (scheduler.isShutdown()) {
+            reconnectPending = false;
+            return;
+        }
+        reconnectFuture = scheduler.schedule(() -> {
+            reconnectPending = false;
+            reconnectFuture = null;
+            // ready=true means a concurrent connect() succeeded while this task was waiting;
+            // skip the reconnect to avoid opening a second transport on top of a live session.
+            if (!shouldReconnect || transport == null || ready) return;
             notifyStatus("Reconnecting...");
             pending.clear();
             // Pass aeOriginator (not savedAeId) — CSE expects "C"+serial, not raw serial
@@ -824,6 +861,20 @@ public class OneM2MSession implements ProtocolClient, DroneCommandListener {
     private void cancelAllTimeouts() {
         for (ScheduledFuture<?> f : timeouts.values()) f.cancel(false);
         timeouts.clear();
+    }
+
+    /**
+     * Cancela o task de reconnect pendente, se existir.
+     *
+     * <p>Chamado em {@link #disconnect()} e no início de {@link #connect} para garantir
+     * que tasks de sessões anteriores não disparam sobre a sessão nova.
+     */
+    private void cancelReconnectFuture() {
+        if (reconnectFuture != null) {
+            reconnectFuture.cancel(false);
+            reconnectFuture = null;
+        }
+        reconnectPending = false;
     }
 
     /** Publica uma mensagem de estado ao SessionListener e ao log. */

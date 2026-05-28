@@ -333,6 +333,10 @@ public class DuvopsView extends LinearLayout implements View.OnClickListener {
                 ? (String) protocolSpinner.getSelectedItem()
                 : "WebSocket";
 
+        // Disconnect first to release the previous transport's resources
+        // (sockets, threads, callback servers) before swapping to a new one.
+        session.disconnect();
+
         // Criar transport para o protocolo escolhido e injectar na sessão
         ProtocolClient newTransport = buildTransport(protocol);
         session.setTransport(newTransport);
