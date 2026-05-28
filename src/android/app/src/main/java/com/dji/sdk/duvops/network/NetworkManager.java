@@ -61,6 +61,17 @@ public class NetworkManager implements ProtocolClient {
     /** Indica se o WebSocket está actualmente ligado. */
     private boolean connected = false;
 
+    /**
+     * Contador de geração do WebSocket.
+     *
+     * <p>Incrementado em cada chamada a {@link #connect}. O valor é passado ao
+     * {@link SocketListener} recém-criado e verificado em {@link #notifyConnectionChange}:
+     * se a geração do callback não coincidir com a actual, o callback é descartado.
+     * Previne que tentativas de ligação obsoletas (ex: IP antigo com timeout de 10 s)
+     * perturbem uma sessão já activa.
+     */
+    private volatile int wsGeneration = 0;
+
     /** Listener de debug para comandos recebidos. */
     private ProtocolClient.CommandLogListener commandLogListener;
 
@@ -150,6 +161,9 @@ public class NetworkManager implements ProtocolClient {
         // an immediate spurious scheduleReconnect(). OneM2MSession already calls
         // notifyStatus("Connecting to...") which updates the UI without side-effects.
 
+        // Invalidate callbacks from any previous WebSocket instance
+        wsGeneration++;
+
         OkHttpClient client = new OkHttpClient();
         Request request = new Request.Builder()
                 .url(serverUrl)
@@ -163,7 +177,7 @@ public class NetworkManager implements ProtocolClient {
                 .addHeader("X-M2M-Origin", aeId)
                 .build();
 
-        SocketListener socketListener = new SocketListener(this);
+        SocketListener socketListener = new SocketListener(this, wsGeneration);
         ws = client.newWebSocket(request, socketListener);
     }
 
@@ -223,10 +237,20 @@ public class NetworkManager implements ProtocolClient {
     /**
      * Notifica o listener da mudança de estado de conexão.
      *
-     * @param connected {@code true} se a conexão é bem-sucedida
-     * @param msg       mensagem a exibir na UI (usada apenas em caso de falha)
+     * <p>Se {@code generation} não coincidir com {@link #wsGeneration} actual, o callback
+     * é de um WebSocket obsoleto (ex: tentativa anterior com timeout ainda a correr) e é
+     * descartado silenciosamente para não perturbar a sessão activa.
+     *
+     * @param connected  {@code true} se a conexão é bem-sucedida
+     * @param msg        mensagem a exibir na UI (usada apenas em caso de falha)
+     * @param generation geração do WebSocket que gerou este callback
      */
-    public void notifyConnectionChange(boolean connected, String msg) {
+    public void notifyConnectionChange(boolean connected, String msg, int generation) {
+        if (generation != wsGeneration) {
+            Log.d(TAG, "Dropping stale ws callback gen=" + generation + " current=" + wsGeneration
+                    + " connected=" + connected + " msg=" + msg);
+            return;
+        }
         this.connected = connected;
         if (listener != null) {
             if (connected) {

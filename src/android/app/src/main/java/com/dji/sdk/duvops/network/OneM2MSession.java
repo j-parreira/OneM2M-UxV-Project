@@ -408,7 +408,9 @@ public class OneM2MSession implements ProtocolClient, DroneCommandListener {
     @Override
     public void onConnectionStatusChange(boolean isConnected, String message) {
         if (isConnected) {
-            reconnectDelayS = 1; // reset backoff
+            // Do NOT reset reconnectDelayS here — WS open ≠ session ready.
+            // If rsc=4117 kills the session immediately, resetting the delay here
+            // would cause a tight 1 s loop. Backoff is reset only in onSessionReady().
             registerAE();
         } else {
             ready = false;
@@ -747,6 +749,9 @@ public class OneM2MSession implements ProtocolClient, DroneCommandListener {
      */
     private void onSessionReady() {
         ready = true;
+        // Only reset backoff here — a fully successful session justifies starting fresh.
+        // Resetting on WS open alone (onConnectionStatusChange) would loop at 1 s on rsc=4117.
+        reconnectDelayS = 1;
         Log.d(TAG, "OneM2M session ready — AE=" + aeOriginator);
         notifyStatus("OneM2M ready — " + aeOriginator);
         commandListener.onConnectionStatusChange(true,

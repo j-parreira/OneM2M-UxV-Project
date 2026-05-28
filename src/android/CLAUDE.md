@@ -180,6 +180,8 @@ connect(host, 8180, serialNumber)
 | Reconnect automático com backoff | 1s→30s; `reconnectPending` flag evita reconnect storm |
 | Guard `\|\| ready` no lambda de reconnect | Evita reconnect duplo se connect() succeeds durante o backoff |
 | Protocol switch resource leak fix | `session.disconnect()` antes de `setTransport()` em `connectToCse()` |
+| Stale WS callback guard (`wsGeneration`) | `NetworkManager.wsGeneration` incrementa em cada `connect()`; callbacks de gerações obsoletas são descartados |
+| Backoff reset movido para `onSessionReady` | `reconnectDelayS=1` só repõe após sessão completa — evita loop 1 s em rsc=4117 |
 | Timeout na registration sequence | 10s/request |
 | Command ACK (`cse-in/uxv/ack`) | `{command, seq_cmd, t_cmd_ms, t_recv_ms, t_exec_ms}` |
 | Configurable telemetry rate (`setTelemetryRate`) | — |
@@ -498,6 +500,8 @@ o mesmo originator em `associatedConnections`, reutiliza-a.
 | Reconnect storm (onClosing+onClosed+onFailure) | `reconnectPending` volatile flag em `scheduleReconnect()` — já corrigido |
 | Spurious reconnect quando connect() chama disconnect() | Guard `\|\| ready` no lambda de reconnect — já corrigido |
 | Resource leak ao trocar protocolo no spinner | `session.disconnect()` antes de `setTransport()` — já corrigido |
+| Stale WS callback mata sessão activa (IP antigo com timeout 10 s) | `wsGeneration` counter em `NetworkManager` + `SocketListener` — já corrigido |
+| Backoff reset em loop após rsc=4117 | `reconnectDelayS=1` movido de `onConnectionStatusChange` para `onSessionReady` — já corrigido |
 | Câmara térmica requer mudança de modo | Definir cameraMode antes do zoom |
 | Gimbal pitch fora de range em algumas missões | Clamp pitch para [-90,30] antes de enviar |
 | Notificações não chegam sem `poa` | `poa=['ws://host:port']` obrigatório no registo AE — já corrigido |

@@ -26,6 +26,13 @@ import org.jetbrains.annotations.Nullable;
  * onOpen → [onMessage]* → onClosing → onClosed
  *                                ↘ onFailure (se erro)
  * </pre>
+ *
+ * <p>Cada instância carrega uma {@link #generation} que corresponde ao valor de
+ * {@code wsGeneration} em {@link NetworkManager} no momento em que foi criada.
+ * Se entre a criação e a execução do callback o {@code NetworkManager} tiver aberto
+ * um novo WebSocket (incrementando a geração), o callback é descartado — evita que
+ * tentativas de ligação obsoletas (ex: IP antigo com timeout de 10s) perturbem
+ * uma sessão já estabelecida.
  */
 public class SocketListener extends WebSocketListener {
 
@@ -33,12 +40,20 @@ public class SocketListener extends WebSocketListener {
     private final NetworkManager manager;
 
     /**
-     * Cria o listener ligado ao gestor de rede.
-     *
-     * @param manager o NetworkManager que gere este WebSocket
+     * Geração do WebSocket que criou este listener.
+     * Callbacks de gerações anteriores são ignorados pelo NetworkManager.
      */
-    public SocketListener(NetworkManager manager) {
+    private final int generation;
+
+    /**
+     * Cria o listener ligado ao gestor de rede com a geração actual.
+     *
+     * @param manager    o NetworkManager que gere este WebSocket
+     * @param generation o contador de geração do NetworkManager no momento da criação
+     */
+    public SocketListener(NetworkManager manager, int generation) {
         this.manager = manager;
+        this.generation = generation;
     }
 
     /**
@@ -49,8 +64,8 @@ public class SocketListener extends WebSocketListener {
      */
     @Override
     public void onOpen(@NotNull WebSocket webSocket, @NotNull Response response) {
-        Log.d("SocketListener", "CONNECTED");
-        manager.notifyConnectionChange(true, "Connected");
+        Log.d("SocketListener", "CONNECTED gen=" + generation);
+        manager.notifyConnectionChange(true, "Connected", generation);
     }
 
     /**
@@ -61,7 +76,9 @@ public class SocketListener extends WebSocketListener {
      */
     @Override
     public void onMessage(@NotNull WebSocket webSocket, @NotNull String text) {
-        // Passa a mensagem crua para o NetworkManager tratar
+        // Passa a mensagem crua para o NetworkManager tratar (sem guarda de geração —
+        // onMessage só é chamado em sockets activos; se o socket foi substituído o okhttp
+        // já não entregará mais mensagens nesta instância)
         manager.handleRawMessage(text);
     }
 
@@ -74,8 +91,8 @@ public class SocketListener extends WebSocketListener {
      */
     @Override
     public void onClosing(@NotNull WebSocket webSocket, int code, @NotNull String reason) {
-        Log.d("SocketListener", "CLOSING: " + reason);
-        manager.notifyConnectionChange(false, "Closing...");
+        Log.d("SocketListener", "CLOSING gen=" + generation + ": " + reason);
+        manager.notifyConnectionChange(false, "Closing...", generation);
     }
 
     /**
@@ -87,8 +104,8 @@ public class SocketListener extends WebSocketListener {
      */
     @Override
     public void onClosed(@NotNull WebSocket webSocket, int code, @NotNull String reason) {
-        Log.d("SocketListener", "CLOSED: " + reason);
-        manager.notifyConnectionChange(false, "Closed");
+        Log.d("SocketListener", "CLOSED gen=" + generation + ": " + reason);
+        manager.notifyConnectionChange(false, "Closed", generation);
     }
 
     /**
@@ -100,7 +117,7 @@ public class SocketListener extends WebSocketListener {
      */
     @Override
     public void onFailure(@NotNull WebSocket webSocket, @NotNull Throwable t, @Nullable Response response) {
-        Log.e("SocketListener", "ERROR: " + t.getMessage());
-        manager.notifyConnectionChange(false, "Error: " + t.getMessage());
+        Log.e("SocketListener", "ERROR gen=" + generation + ": " + t.getMessage());
+        manager.notifyConnectionChange(false, "Error: " + t.getMessage(), generation);
     }
 }
