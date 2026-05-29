@@ -92,7 +92,7 @@ connect(host, 8180, serialNumber)
 ```
 
 **CSE host**: configurado no campo `hostname` da `DuvopsView`.
-- Default: `10.26.93.148` (IP actual da máquina dev; era 192.168.1.100)
+- Default: `10.28.20.148` (IP actual da máquina dev; DHCP — muda frequentemente)
 - Persisted em `SharedPreferences` (`duvops_prefs → server_url`)
 - Aceita formato `host` ou `host:port` (port default: 8180 WS)
 

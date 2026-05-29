@@ -32,6 +32,8 @@ package com.dji.sdk.duvops.flight;
 import android.app.Service;
 import android.content.Context;
 import android.content.SharedPreferences;
+import android.os.Handler;
+import android.os.Looper;
 import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.View;
@@ -70,7 +72,7 @@ public class DuvopsView extends LinearLayout implements View.OnClickListener {
 
     private static final String PREFS_NAME     = "duvops_prefs";
     private static final String KEY_SERVER_URL  = "server_url";
-    private static final String DEFAULT_CSE_HOST     = "10.26.93.148";
+    private static final String DEFAULT_CSE_HOST     = "10.28.20.148";
     /** Nomes dos protocolos no spinner — índice 0 é o default (WebSocket). */
     private static final String[] PROTOCOLS = {"WebSocket", "MQTT", "HTTP", "CoAP"};
 
@@ -306,7 +308,9 @@ public class DuvopsView extends LinearLayout implements View.OnClickListener {
                     if (telemetryManager != null) telemetryManager.setModelName(model);
                     flightManager.initGimbal();
                     Log.d(TAG, "serialNumber: " + s);
-                    connectToCse();
+                    // DJI SDK callbacks run on a background thread — post to main thread
+                    // before touching any Views (connectToCse calls setText on connectws)
+                    new Handler(Looper.getMainLooper()).post(DuvopsView.this::connectToCse);
                 }
                 @Override
                 public void onFailure(DJIError djiError) {
