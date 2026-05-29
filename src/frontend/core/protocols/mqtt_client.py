@@ -66,6 +66,7 @@ class MqttClient(ProtocolClient):
         self._seq = 0
 
         self._client = mqtt.Client(
+            callback_api_version=mqtt.CallbackAPIVersion.VERSION1,
             client_id=f"streamlit-{uuid.uuid4().hex[:8]}",
             protocol=mqtt.MQTTv311,
         )
@@ -75,6 +76,11 @@ class MqttClient(ProtocolClient):
 
         # Track last publish payload size for header overhead calculation.
         self._last_payload_bytes = 0
+
+        # ri of each subscription — matched against `sur` in notifications.
+        # ACME CSE puts the auto-generated ri, not the human-readable path, in `sur`.
+        self._tel_sub_ri: Optional[str] = None
+        self._ack_sub_ri: Optional[str] = None
 
     # ------------------------------------------------------------------
     # ProtocolClient interface
@@ -96,9 +102,15 @@ class MqttClient(ProtocolClient):
         self._client.subscribe(_TOPIC_RESP, qos=1)
         self._client.subscribe(_TOPIC_NOTIF, qos=1)
 
+        print(f"[MQTT] connected — registering AE and subscriptions", flush=True)
         self._register_ae()
-        self._ensure_subscription("cse-in/uxv/telemetry", _SUB_TEL_RN)
-        self._ensure_subscription("cse-in/uxv/ack", _SUB_ACK_RN)
+        self._tel_sub_ri = self._ensure_subscription("cse-in/uxv/telemetry", _SUB_TEL_RN)
+        self._ack_sub_ri = self._ensure_subscription("cse-in/uxv/ack", _SUB_ACK_RN)
+        if self._tel_sub_ri is None:
+            print("[MQTT] WARNING: telemetry subscription ri not captured", flush=True)
+        if self._ack_sub_ri is None:
+            print("[MQTT] WARNING: ack subscription ri not captured", flush=True)
+        print(f"[MQTT] tel_sub_ri={self._tel_sub_ri}  ack_sub_ri={self._ack_sub_ri}", flush=True)
 
     def send_command(self, payload: dict) -> tuple[float | None, bool]:
         con_str = json.dumps(payload)
@@ -156,6 +168,7 @@ class MqttClient(ProtocolClient):
     # ------------------------------------------------------------------
 
     def _on_connect(self, client, userdata, flags, rc):
+        print(f"[MQTT] on_connect rc={rc}", flush=True)
         if rc == 0:
             self._connected_event.set()
 
@@ -205,10 +218,20 @@ class MqttClient(ProtocolClient):
         except (json.JSONDecodeError, TypeError):
             return
 
-        if "telemetry" in sur and self._telemetry_cb:
-            self._telemetry_cb(con)
-        elif "ack" in sur and self._ack_cb:
-            self._ack_cb(con)
+        # ACME CSE puts the subscription ri (e.g. /id-in/subXXX) in `sur`, not the path.
+        is_tel = self._tel_sub_ri is not None and self._tel_sub_ri in sur
+        is_ack = self._ack_sub_ri is not None and self._ack_sub_ri in sur
+        print(f"[MQTT] notify sur={sur!r} is_tel={is_tel} is_ack={is_ack}", flush=True)
+        if is_tel and self._telemetry_cb:
+            try:
+                self._telemetry_cb(con)
+            except Exception as exc:
+                print(f"[MQTT] telemetry_cb raised: {exc!r}", flush=True)
+        elif is_ack and self._ack_cb:
+            try:
+                self._ack_cb(con)
+            except Exception as exc:
+                print(f"[MQTT] ack_cb raised: {exc!r}", flush=True)
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -264,14 +287,22 @@ class MqttClient(ProtocolClient):
         try:
             resp = self._publish_request(req, timeout=_REQUEST_TIMEOUT_S)
             rsc = resp.get("rsc") if resp else None
+            print(f"[MQTT] AE register rsc={rsc}", flush=True)
             # 4117 = ACME CSE v2025.11 "originator already registered" — treat as 4105.
-            if rsc not in (2001, 4105, 4117):
+            if rsc == 4105 or rsc == 4117:
+                # AE exists from a previous session — update poa to current transport.
+                self._update_ae_poa()
+            elif rsc != 2001:
                 raise RuntimeError(f"AE registration failed: rsc={rsc}")
         except TimeoutError:
-            pass   # proceed optimistically
+            print("[MQTT] AE register timed out — proceeding optimistically", flush=True)
 
-    def _ensure_subscription(self, container_path: str, rn: str) -> None:
-        """Delete existing subscription (if any) and create a fresh one."""
+    def _ensure_subscription(self, container_path: str, rn: str) -> Optional[str]:
+        """Delete existing subscription (if any), create a fresh one, return its ri.
+
+        Returns:
+            The `ri` of the newly created subscription, or None on failure.
+        """
         self._delete_resource(f"{container_path}/{rn}")
 
         rqi = self._next_rqi()
@@ -291,9 +322,41 @@ class MqttClient(ProtocolClient):
             },
         }
         try:
-            self._publish_request(req, timeout=_REQUEST_TIMEOUT_S)
+            resp = self._publish_request(req, timeout=_REQUEST_TIMEOUT_S)
+            rsc = resp.get("rsc") if resp else None
+            ri = resp.get("pc", {}).get("m2m:sub", {}).get("ri") if resp else None
+            print(f"[MQTT] subscribe {container_path}/{rn} rsc={rsc} ri={ri}", flush=True)
+            return ri if rsc == 2001 else None
         except TimeoutError:
-            pass
+            print(f"[MQTT] subscribe {container_path}/{rn} timed out", flush=True)
+            return None
+
+    def _update_ae_poa(self) -> None:
+        """UPDATE the AE's poa to MQTT transport.
+
+        Called when the AE already exists (rsc=4105/4117) from a previous session
+        that may have used a different transport (e.g. WebSocket). Without this,
+        the CSE would deliver notifications via the old transport → KeyError.
+        """
+        rqi = self._next_rqi()
+        req = {
+            "op": 3,  # UPDATE
+            "to": f"cse-in/{_AE_RN}",
+            "fr": _ORIGINATOR,
+            "rqi": rqi,
+            "rvi": "3",
+            "pc": {
+                "m2m:ae": {
+                    "poa": [f"mqtt://{self._config.cse_host}:{self._config.cse_mqtt_port}"],
+                }
+            },
+        }
+        try:
+            resp = self._publish_request(req, timeout=_REQUEST_TIMEOUT_S)
+            rsc = resp.get("rsc") if resp else None
+            print(f"[MQTT] AE poa update rsc={rsc}", flush=True)
+        except TimeoutError:
+            print("[MQTT] AE poa update timed out", flush=True)
 
     def _delete_resource(self, resource_path: str) -> None:
         rqi = self._next_rqi()
