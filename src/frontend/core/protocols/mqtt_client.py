@@ -264,7 +264,8 @@ class MqttClient(ProtocolClient):
         try:
             resp = self._publish_request(req, timeout=_REQUEST_TIMEOUT_S)
             rsc = resp.get("rsc") if resp else None
-            if rsc not in (2001, 4105):
+            # 4117 = ACME CSE v2025.11 "originator already registered" — treat as 4105.
+            if rsc not in (2001, 4105, 4117):
                 raise RuntimeError(f"AE registration failed: rsc={rsc}")
         except TimeoutError:
             pass   # proceed optimistically

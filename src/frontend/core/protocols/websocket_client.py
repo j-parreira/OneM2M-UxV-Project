@@ -8,10 +8,13 @@ Transport: websockets 13.1 sync API (websockets.sync.client), which is
 thread-safe for concurrent send/recv.
 """
 import json
+import logging
 import threading
 import time
 import uuid
 from typing import Callable, Optional
+
+_log = logging.getLogger(__name__)
 
 from websockets.sync.client import connect as ws_connect
 from websockets.exceptions import ConnectionClosed
@@ -67,6 +70,11 @@ class WebSocketClient(ProtocolClient):
         # Monotonic sequence counter for rqi generation
         self._seq = 0
 
+        # ri (resource identifier) of each subscription — set by _ensure_subscription.
+        # ACME CSE puts the ri in `sur` of notifications, not the human-readable path.
+        self._tel_sub_ri: Optional[str] = None
+        self._ack_sub_ri: Optional[str] = None
+
     # ------------------------------------------------------------------
     # ProtocolClient interface
     # ------------------------------------------------------------------
@@ -91,8 +99,12 @@ class WebSocketClient(ProtocolClient):
         self._recv_thread.start()
 
         self._register_ae()
-        self._ensure_subscription("cse-in/uxv/telemetry", _SUB_TEL_RN)
-        self._ensure_subscription("cse-in/uxv/ack", _SUB_ACK_RN)
+        self._tel_sub_ri = self._ensure_subscription("cse-in/uxv/telemetry", _SUB_TEL_RN)
+        self._ack_sub_ri = self._ensure_subscription("cse-in/uxv/ack", _SUB_ACK_RN)
+        if self._tel_sub_ri is None:
+            print("[WS] WARNING: telemetry subscription failed — Android container may not exist yet. Reconnect after Android registers.", flush=True)
+        if self._ack_sub_ri is None:
+            print("[WS] WARNING: ack subscription failed — Android container may not exist yet.", flush=True)
 
     def send_command(self, payload: dict) -> tuple[float | None, bool]:
         """Post a command CIN to /cse-in/uxv/commands.
@@ -255,15 +267,28 @@ class WebSocketClient(ProtocolClient):
         con_raw = cin.get("con", "")
         sur = sgn.get("sur", "")  # subscribed resource URI
 
+        # ACME CSE puts the subscription ri (not the human-readable path) in `sur`,
+        # e.g. '/id-in/subBPiTR1sRvs'. Match against the ri captured at connect time.
+        is_tel = self._tel_sub_ri is not None and self._tel_sub_ri in sur
+        is_ack = self._ack_sub_ri is not None and self._ack_sub_ri in sur
+
         try:
             con = json.loads(con_raw) if isinstance(con_raw, str) else con_raw
         except (json.JSONDecodeError, TypeError):
             return
 
-        if "telemetry" in sur and self._telemetry_cb:
-            self._telemetry_cb(con)
-        elif "ack" in sur and self._ack_cb:
-            self._ack_cb(con)
+        if is_tel and self._telemetry_cb:
+            try:
+                self._telemetry_cb(con)
+            except Exception as exc:
+                # Catch exceptions from callbacks (e.g. Streamlit session state
+                # accessed from a non-main thread) to prevent recv_loop from dying.
+                print(f"[WS] telemetry_cb raised: {exc!r}", flush=True)
+        elif is_ack and self._ack_cb:
+            try:
+                self._ack_cb(con)
+            except Exception as exc:
+                print(f"[WS] ack_cb raised: {exc!r}", flush=True)
 
     def _register_ae(self) -> None:
         """Register Streamlit as an AE under the CSE-Base.
@@ -295,12 +320,16 @@ class WebSocketClient(ProtocolClient):
             return  # If CSE doesn't respond, proceed optimistically.
 
         rsc = resp.get("rsc") if resp else None
-        # 2001 = Created, 4105 = Conflict (already exists) — both are OK.
-        if rsc not in (2001, 4105):
+        # 2001 = Created, 4105 = Conflict (already exists),
+        # 4117 = ACME CSE v2025.11 "originator already registered on active WS" — all OK.
+        if rsc not in (2001, 4105, 4117):
             raise RuntimeError(f"AE registration failed: rsc={rsc}, resp={resp}")
 
-    def _ensure_subscription(self, container_path: str, rn: str) -> None:
+    def _ensure_subscription(self, container_path: str, rn: str) -> Optional[str]:
         """Create a SUB resource; delete and re-create if it already exists.
+
+        Returns the `ri` of the created subscription, used to match `sur` in
+        incoming notifications (ACME CSE puts ri, not rn, in the `sur` field).
 
         Parameters
         ----------
@@ -333,12 +362,13 @@ class WebSocketClient(ProtocolClient):
         try:
             resp = self._send_request(req)
         except TimeoutError:
-            return
+            return None
 
         rsc = resp.get("rsc") if resp else None
-        if rsc not in (2001, 4105):
-            # Non-fatal: log but continue. Notifications may not arrive.
-            pass
+        if rsc == 2001:
+            # Extract the auto-generated ri so we can match it in notification `sur`.
+            return resp.get("pc", {}).get("m2m:sub", {}).get("ri")
+        return None
 
     def _delete_resource(self, resource_path: str) -> None:
         """DELETE a CSE resource (best-effort; ignore errors)."""

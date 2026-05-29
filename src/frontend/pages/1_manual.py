@@ -65,15 +65,21 @@ with col_connect:
                     while not st.session_state.ack_queue.empty():
                         st.session_state.ack_queue.get_nowait()
 
+                    # Capture queue references now (Streamlit main thread).
+                    # Do NOT access st.session_state from recv callback threads —
+                    # Streamlit session state is not accessible outside the main thread.
+                    _tel_q = st.session_state.tel_queue
+                    _ack_q = st.session_state.ack_queue
+
                     def on_telemetry(con: dict) -> None:
                         try:
-                            st.session_state.tel_queue.put_nowait(con)
+                            _tel_q.put_nowait(con)
                         except queue.Full:
                             pass
 
                     def on_ack(con: dict) -> None:
                         try:
-                            st.session_state.ack_queue.put_nowait(con)
+                            _ack_q.put_nowait(con)
                         except queue.Full:
                             pass
 
