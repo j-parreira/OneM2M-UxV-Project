@@ -60,6 +60,9 @@ services:
     volumes:
       - ./config/acme.ini:/data/acme.ini:ro   # config — edit without rebuild
       - acme-data:/data/db                     # TinyDB — persistent across restarts
+      # Patch: disable WS keepalive pings to prevent dropout under benchmark load.
+      # See src/cse/patches/WebSocketServer.py for rationale.
+      - ./patches/WebSocketServer.py:/usr/local/lib/python3.11/site-packages/acmecse/protocols/WebSocketServer.py:ro
     cap_add:
       - NET_ADMIN            # required for tc netem (Scenario 3)
     networks:
