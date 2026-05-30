@@ -54,6 +54,17 @@ public class MqttProtocolClient implements ProtocolClient {
     /** CSE-ID usado no tópico MQTT (deve coincidir com {@code cseID} no acme.ini). */
     private static final String CSE_ID = "id-in";
 
+    /**
+     * Hostname do broker MQTT usado na {@code poa} do AE — deve ser acessível
+     * a partir do container Docker do ACME CSE, não do dispositivo Android.
+     *
+     * <p>O CSE resolve o {@code poa} para entregar notificações. O Android liga-se
+     * ao Mosquitto via IP LAN ({@code savedHost}), mas o CSE (dentro do Docker)
+     * não consegue atingir IPs externos — só resolve serviços Docker via DNS interno.
+     * {@code "mosquitto"} é o nome do serviço no {@code docker-compose.yml}.
+     */
+    private static final String MQTT_BROKER_POA_HOST = "mosquitto";
+
     /** Timeout de ligação em segundos. */
     private static final int CONNECT_TIMEOUT_S = 10;
 
@@ -293,11 +304,16 @@ public class MqttProtocolClient implements ProtocolClient {
     /**
      * Retorna o URL do Point of Access MQTT deste transporte.
      *
-     * @return URL no formato {@code mqtt://host:port}
+     * <p>Usa {@code MQTT_BROKER_POA_HOST} ("mosquitto") em vez do {@code savedHost}
+     * (IP LAN do Android) porque o ACME CSE resolve este endereço a partir do seu
+     * container Docker — onde o IP LAN externo é inacessível mas "mosquitto" resolve
+     * via DNS interno do Docker Compose.
+     *
+     * @return URL no formato {@code mqtt://mosquitto:port}
      */
     @Override
     public String getPoaUrl() {
-        return "mqtt://" + savedHost + ":" + savedPort;
+        return "mqtt://" + MQTT_BROKER_POA_HOST + ":" + savedPort;
     }
 
     /**
