@@ -32,6 +32,13 @@ class Config:
     callback_http_port: int
     callback_coap_port: int
 
+    # MQTT poa host — the broker address the CSE uses when delivering notifications.
+    # Must be reachable FROM INSIDE the CSE Docker container, not from the host.
+    # Default: "mosquitto" (Docker Compose service name, resolved via Docker DNS).
+    # Using CSE_HOST (e.g. 127.0.0.1) here will FAIL: 127.0.0.1 inside the CSE
+    # container is the container's own loopback, NOT the host's Mosquitto broker.
+    mqtt_broker_poa_host: str
+
     @property
     def cse_http_base(self) -> str:
         return f"http://{self.cse_host}:{self.cse_http_port}"
@@ -74,4 +81,5 @@ def load_config() -> Config:
         callback_host=os.getenv("CALLBACK_HOST", "127.0.0.1"),
         callback_http_port=int(os.getenv("CALLBACK_HTTP_PORT", "8090")),
         callback_coap_port=int(os.getenv("CALLBACK_COAP_PORT", "5684")),
+        mqtt_broker_poa_host=os.getenv("MQTT_BROKER_POA_HOST", "mosquitto"),
     )

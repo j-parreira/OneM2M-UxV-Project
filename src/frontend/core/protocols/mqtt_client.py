@@ -278,9 +278,12 @@ class MqttClient(ProtocolClient):
                     "api": "N.com.uxv.benchmark.streamlit",
                     "srv": ["3"],
                     "rr": True,
-                    # poa for MQTT: CSE uses the active MQTT connection for notification delivery.
-                    # The mqtt:// poa tells the CSE to use MQTT transport for this AE.
-                    "poa": [f"mqtt://{self._config.cse_host}:{self._config.cse_mqtt_port}"],
+                    # poa for MQTT: the broker address the CSE will connect to when delivering
+                    # subscription notifications. Must use mqtt_broker_poa_host ("mosquitto"
+                    # by default) — NOT cse_host (127.0.0.1) — because the CSE resolves this
+                    # address from inside its Docker container where 127.0.0.1 is the container's
+                    # own loopback, not the host's Mosquitto broker.
+                    "poa": [f"mqtt://{self._config.mqtt_broker_poa_host}:{self._config.cse_mqtt_port}"],
                 }
             },
         }
@@ -347,7 +350,7 @@ class MqttClient(ProtocolClient):
             "rvi": "3",
             "pc": {
                 "m2m:ae": {
-                    "poa": [f"mqtt://{self._config.cse_host}:{self._config.cse_mqtt_port}"],
+                    "poa": [f"mqtt://{self._config.mqtt_broker_poa_host}:{self._config.cse_mqtt_port}"],
                 }
             },
         }
