@@ -318,6 +318,9 @@ public class MqttProtocolClient implements ProtocolClient {
      * @param topic   tópico alvo
      * @param payload payload JSON serializado
      */
+    /** Contador de publishes para telemetria — evita spam no log ao throttle 1/40 (~10 s). */
+    private int publishCount = 0;
+
     private void publishInternal(String topic, String payload) {
         if (mqttClient == null || !mqttClient.isConnected() || topic == null) {
             Log.w(TAG, "publishInternal skipped: mqttClient=" + mqttClient
@@ -330,6 +333,11 @@ public class MqttProtocolClient implements ProtocolClient {
             msg.setQos(1);
             msg.setRetained(false);
             mqttClient.publish(topic, msg);
+            // Log a cada 40 publishes (~10 s com intervalo de 250 ms) para confirmar que os
+            // CINs chegam ao Mosquitto sem spam excessivo no logcat.
+            if (++publishCount % 40 == 0) {
+                Log.d(TAG, "publishInternal: " + publishCount + " msgs published to " + topic);
+            }
         } catch (MqttException e) {
             Log.e(TAG, "MQTT publish to " + topic + ": " + e.getMessage());
         }

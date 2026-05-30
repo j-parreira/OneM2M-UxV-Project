@@ -72,7 +72,7 @@ public class DuvopsView extends LinearLayout implements View.OnClickListener {
 
     private static final String PREFS_NAME     = "duvops_prefs";
     private static final String KEY_SERVER_URL  = "server_url";
-    private static final String DEFAULT_CSE_HOST     = "10.28.20.148";
+    private static final String DEFAULT_CSE_HOST     = "192.168.1.71";
     /** Nomes dos protocolos no spinner — índice 0 é o default (WebSocket). */
     private static final String[] PROTOCOLS = {"WebSocket", "MQTT", "HTTP", "CoAP"};
 

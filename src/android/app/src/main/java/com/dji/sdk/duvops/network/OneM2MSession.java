@@ -180,6 +180,10 @@ public class OneM2MSession implements ProtocolClient, DroneCommandListener {
     /** {@code true} quando a sessão está registada e pronta a enviar telemetria. */
     private volatile boolean ready = false;
 
+    /** Conta CINs de telemetria enviados — log na primeira chamada para confirmar o timer. */
+    private final java.util.concurrent.atomic.AtomicInteger cinCount =
+            new java.util.concurrent.atomic.AtomicInteger(0);
+
     /**
      * {@code true} quando o utilizador chamou {@link #connect} e não chamou
      * {@link #disconnect}. Controla o loop de reconnect.
@@ -344,6 +348,11 @@ public class OneM2MSession implements ProtocolClient, DroneCommandListener {
     @Override
     public void sendTelemetry(String jsonPayload) {
         if (!ready) return;
+        int n = cinCount.incrementAndGet();
+        // Log na primeira CIN e depois a cada 40 (~10 s) para confirmar que o timer está activo.
+        if (n == 1 || n % 40 == 0) {
+            Log.d(TAG, "sendTelemetry: CIN #" + n + " (transport=" + transport.getClass().getSimpleName() + ")");
+        }
         try {
             // cnf omitido — "application/json" falha validação em ACME CSE v2025.11
             JSONObject pc = new JSONObject()
