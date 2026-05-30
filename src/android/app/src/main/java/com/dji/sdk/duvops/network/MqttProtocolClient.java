@@ -319,7 +319,12 @@ public class MqttProtocolClient implements ProtocolClient {
      * @param payload payload JSON serializado
      */
     private void publishInternal(String topic, String payload) {
-        if (mqttClient == null || !mqttClient.isConnected() || topic == null) return;
+        if (mqttClient == null || !mqttClient.isConnected() || topic == null) {
+            Log.w(TAG, "publishInternal skipped: mqttClient=" + mqttClient
+                    + " connected=" + (mqttClient != null && mqttClient.isConnected())
+                    + " topic=" + topic);
+            return;
+        }
         try {
             MqttMessage msg = new MqttMessage(payload.getBytes());
             msg.setQos(1);

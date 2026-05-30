@@ -46,6 +46,7 @@ import dji.common.camera.CameraVideoStreamSource;
 import dji.common.camera.SettingsDefinitions;
 import dji.common.error.DJIError;
 import dji.common.flightcontroller.FlightControllerState;
+import dji.common.flightcontroller.GoHomeAssessment;
 import dji.common.flightcontroller.LEDsSettings;
 import dji.common.flightcontroller.LocationCoordinate3D;
 import dji.common.gimbal.Attitude;
@@ -426,16 +427,24 @@ public class TelemetryManager {
         timer.schedule(new TimerTask() {
             @Override
             public void run() {
-                if (tickCount % ticksPerSecond == 0) {
-                    updateSlowData();
-                    if (tickListener != null) {
-                        boolean flying = currentFlightState != null && currentFlightState.isFlying();
-                        int sats = currentFlightState != null ? currentFlightState.getSatelliteCount() : 0;
-                        tickListener.onSlowTick(seqCounter.get(), batteryPercent, flying, sats);
+                // Wrap in try-catch: any unchecked exception (NPE, etc.) propagating
+                // out of run() would permanently kill the Timer thread in Java's Timer
+                // implementation. This guard ensures the telemetry stream survives
+                // transient SDK null-returns (e.g. getGoHomeAssessment() before flight).
+                try {
+                    if (tickCount % ticksPerSecond == 0) {
+                        updateSlowData();
+                        if (tickListener != null) {
+                            boolean flying = currentFlightState != null && currentFlightState.isFlying();
+                            int sats = currentFlightState != null ? currentFlightState.getSatelliteCount() : 0;
+                            tickListener.onSlowTick(seqCounter.get(), batteryPercent, flying, sats);
+                        }
                     }
+                    tickCount++;
+                    collectAndSend();
+                } catch (Exception e) {
+                    Log.e(TAG, "Timer task error: " + e.getMessage(), e);
                 }
-                tickCount++;
-                collectAndSend();
             }
         }, 0, intervalMs);
     }
@@ -536,7 +545,9 @@ public class TelemetryManager {
 
                 status.put("isFlying", state.isFlying());
                 status.put("satCount", state.getSatelliteCount());
-                status.put("rft", state.getGoHomeAssessment().getRemainingFlightTime());
+                // getGoHomeAssessment() returns null when drone is on ground / not ready
+                GoHomeAssessment gha = state.getGoHomeAssessment();
+                status.put("rft", gha != null ? gha.getRemainingFlightTime() : 0);
                 status.put("isGoingHome", state.isGoingHome());
                 status.put("areMotorsOn", state.areMotorsOn());
                 status.put("isHomeLocationSet", state.isHomeLocationSet());
