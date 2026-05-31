@@ -167,58 +167,61 @@ st.divider()
 
 st.subheader("Live Telemetry")
 
-tel_placeholder = st.empty()
-ack_placeholder = st.empty()
 
-# Drain the telemetry queue and show the latest reading.
-latest_tel: Optional[dict] = None
-while not st.session_state.tel_queue.empty():
-    try:
-        latest_tel = st.session_state.tel_queue.get_nowait()
-    except queue.Empty:
-        break
+@st.fragment(run_every=0.5)
+def _live_display() -> None:
+    """Fragment that polls the queues every 0.5 s.
 
-if latest_tel:
-    tel_col1, tel_col2, tel_col3, tel_col4 = tel_placeholder.columns(4)
-    with tel_col1:
-        lat = latest_tel.get("lat", "—")
-        lng = latest_tel.get("lng", "—")
-        st.metric("GPS", f"{lat}, {lng}")
-    with tel_col2:
-        alt = latest_tel.get("alt", "—")
-        st.metric("Altitude", f"{alt} m" if alt != "—" else "—")
-    with tel_col3:
-        bat_obj = latest_tel.get("bat", {})
-        bat = bat_obj.get("lvl", "—") if isinstance(bat_obj, dict) else "—"
-        st.metric("Battery", f"{bat}%" if bat != "—" else "—")
-    with tel_col4:
-        vel_x = latest_tel.get("velX")
-        vel_y = latest_tel.get("velY")
-        if vel_x is not None and vel_y is not None:
-            st.metric("Speed", f"{math.hypot(vel_x, vel_y):.1f} m/s")
-        else:
-            st.metric("Speed", "—")
-else:
-    tel_placeholder.info("No telemetry yet — connect and ensure the drone is active.")
+    Using @st.fragment avoids a full-page rerun on each tick, which eliminates
+    the browser title-bar spinner while the live display is updating.
+    """
+    # Drain the telemetry queue — keep only the latest reading.
+    latest_tel: Optional[dict] = None
+    while not st.session_state.tel_queue.empty():
+        try:
+            latest_tel = st.session_state.tel_queue.get_nowait()
+        except queue.Empty:
+            break
 
-# Show latest ACK.
-latest_ack: Optional[dict] = None
-while not st.session_state.ack_queue.empty():
-    try:
-        latest_ack = st.session_state.ack_queue.get_nowait()
-    except queue.Empty:
-        break
+    if latest_tel:
+        tel_col1, tel_col2, tel_col3, tel_col4 = st.columns(4)
+        with tel_col1:
+            lat = latest_tel.get("lat", "—")
+            lng = latest_tel.get("lng", "—")
+            st.metric("GPS", f"{lat}, {lng}")
+        with tel_col2:
+            alt = latest_tel.get("alt", "—")
+            st.metric("Altitude", f"{alt} m" if alt != "—" else "—")
+        with tel_col3:
+            bat_obj = latest_tel.get("bat", {})
+            bat = bat_obj.get("lvl", "—") if isinstance(bat_obj, dict) else "—"
+            st.metric("Battery", f"{bat}%" if bat != "—" else "—")
+        with tel_col4:
+            vel_x = latest_tel.get("velX")
+            vel_y = latest_tel.get("velY")
+            if vel_x is not None and vel_y is not None:
+                st.metric("Speed", f"{math.hypot(vel_x, vel_y):.1f} m/s")
+            else:
+                st.metric("Speed", "—")
+    else:
+        st.info("No telemetry yet — connect and ensure the drone is active.")
 
-if latest_ack:
-    t_cmd = latest_ack.get("t_cmd_ms")
-    t_recv = latest_ack.get("t_recv_ms")
-    latency = (t_recv - t_cmd) if (t_recv and t_cmd) else "—"
-    ack_placeholder.success(
-        f"Last ACK: cmd={latest_ack.get('command')} seq={latest_ack.get('seq_cmd')} "
-        f"latency={latency} ms"
-    )
+    # Drain the ACK queue.
+    latest_ack: Optional[dict] = None
+    while not st.session_state.ack_queue.empty():
+        try:
+            latest_ack = st.session_state.ack_queue.get_nowait()
+        except queue.Empty:
+            break
 
-# Auto-refresh when connected.
-if client is not None:
-    time.sleep(0.5)
-    st.rerun()
+    if latest_ack:
+        t_cmd = latest_ack.get("t_cmd_ms")
+        t_recv = latest_ack.get("t_recv_ms")
+        latency = (t_recv - t_cmd) if (t_recv and t_cmd) else "—"
+        st.success(
+            f"Last ACK: cmd={latest_ack.get('command')} seq={latest_ack.get('seq_cmd')} "
+            f"latency={latency} ms"
+        )
+
+
+_live_display()

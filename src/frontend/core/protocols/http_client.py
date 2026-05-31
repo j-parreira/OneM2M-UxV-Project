@@ -57,6 +57,11 @@ class HttpClient(ProtocolClient):
         self._last_request_headers_bytes = 0
         self._last_response_headers_bytes = 0
 
+        # ri of each subscription — ACME CSE puts the ri (e.g. /id-in/subXXX),
+        # not the human-readable path, in the `sur` field of notifications.
+        self._tel_sub_ri: Optional[str] = None
+        self._ack_sub_ri: Optional[str] = None
+
     # ------------------------------------------------------------------
     # ProtocolClient interface
     # ------------------------------------------------------------------
@@ -64,14 +69,19 @@ class HttpClient(ProtocolClient):
     def connect(self) -> None:
         """Start the callback HTTP server and create CSE subscriptions."""
         self._start_callback_server()
-        self._ensure_subscription(
+        self._tel_sub_ri = self._ensure_subscription(
             f"{self._config.cse_http_base}/cse-in/uxv/telemetry",
             _SUB_TEL_RN,
         )
-        self._ensure_subscription(
+        self._ack_sub_ri = self._ensure_subscription(
             f"{self._config.cse_http_base}/cse-in/uxv/ack",
             _SUB_ACK_RN,
         )
+        if self._tel_sub_ri is None:
+            print("[HTTP] WARNING: telemetry subscription ri not captured", flush=True)
+        if self._ack_sub_ri is None:
+            print("[HTTP] WARNING: ack subscription ri not captured", flush=True)
+        print(f"[HTTP] tel_sub_ri={self._tel_sub_ri}  ack_sub_ri={self._ack_sub_ri}", flush=True)
 
     def send_command(self, payload: dict) -> tuple[float | None, bool]:
         """POST a command CIN to /cse-in/uxv/commands."""
@@ -136,16 +146,25 @@ class HttpClient(ProtocolClient):
             "Accept": "application/json",
         }
 
-    def _ensure_subscription(self, container_url: str, rn: str) -> None:
-        """Delete existing subscription and create a fresh one."""
+    def _ensure_subscription(self, container_url: str, rn: str) -> Optional[str]:
+        """Delete existing subscription and create a fresh one.
+
+        Returns:
+            The ``ri`` of the created subscription, used to match the ``sur``
+            field in incoming notifications (ACME CSE puts ri, not path, in sur).
+            Returns None on failure.
+        """
         sub_url = f"{container_url}/{rn}"
         # Try to delete (ignore errors — may not exist).
         rqi = str(uuid.uuid4())
-        self._session.delete(
-            sub_url,
-            headers=self._m2m_headers(rqi),
-            timeout=5.0,
-        )
+        try:
+            self._session.delete(
+                sub_url,
+                headers=self._m2m_headers(rqi),
+                timeout=5.0,
+            )
+        except requests.RequestException:
+            pass
 
         # Create subscription pointing to our callback server.
         rqi = str(uuid.uuid4())
@@ -159,14 +178,20 @@ class HttpClient(ProtocolClient):
             }
         }
         try:
-            self._session.post(
+            resp = self._session.post(
                 container_url,
                 json=body,
                 headers=self._m2m_headers(rqi, content_type="application/json;ty=23"),
                 timeout=_REQUEST_TIMEOUT_S,
             )
-        except requests.RequestException:
-            pass
+            rsc = resp.headers.get("X-M2M-RSC")
+            print(f"[HTTP] subscribe {container_url}/{rn} status={resp.status_code} rsc={rsc}", flush=True)
+            if resp.status_code == 201:
+                ri = resp.json().get("m2m:sub", {}).get("ri")
+                return ri
+        except requests.RequestException as exc:
+            print(f"[HTTP] subscribe {container_url}/{rn} error: {exc!r}", flush=True)
+        return None
 
     def _start_callback_server(self) -> None:
         """Start the HTTP callback server in a daemon thread."""
@@ -200,29 +225,45 @@ class HttpClient(ProtocolClient):
         self._callback_thread.start()
 
     def _dispatch_notification(self, body: dict) -> None:
-        """Parse a CSE notification POST and call the appropriate callback."""
+        """Parse a CSE notification POST and call the appropriate callback.
+
+        ACME CSE puts the subscription ri (e.g. /id-in/subXXX) in the ``sur``
+        field, NOT the human-readable resource path. We match against the ri
+        captured at connect time, consistent with WS and MQTT clients.
+        """
         # Standard oneM2M HTTP notification body: {"m2m:sgn": {...}}
         sgn = body.get("m2m:sgn", {})
+        sur = sgn.get("sur", "")
 
-        # Subscription verification request (CSE sends this once after SUB creation).
+        # Subscription verification request — HTTP 200 already sent by do_POST; nothing else needed.
         if sgn.get("vrq"):
+            print(f"[HTTP] vrq sur={sur!r} — 200 already sent", flush=True)
             return
 
         nev = sgn.get("nev", {})
         rep = nev.get("rep", {})
         cin = rep.get("m2m:cin", {})
         con_raw = cin.get("con", "")
-        sur = sgn.get("sur", "")
 
         try:
             con = json.loads(con_raw) if isinstance(con_raw, str) else con_raw
         except (json.JSONDecodeError, TypeError):
             return
 
-        if "telemetry" in sur and self._telemetry_cb:
-            self._telemetry_cb(con)
-        elif "ack" in sur and self._ack_cb:
-            self._ack_cb(con)
+        is_tel = self._tel_sub_ri is not None and self._tel_sub_ri in sur
+        is_ack = self._ack_sub_ri is not None and self._ack_sub_ri in sur
+        print(f"[HTTP] notify sur={sur!r} is_tel={is_tel} is_ack={is_ack}", flush=True)
+
+        if is_tel and self._telemetry_cb:
+            try:
+                self._telemetry_cb(con)
+            except Exception as exc:
+                print(f"[HTTP] telemetry_cb raised: {exc!r}", flush=True)
+        elif is_ack and self._ack_cb:
+            try:
+                self._ack_cb(con)
+            except Exception as exc:
+                print(f"[HTTP] ack_cb raised: {exc!r}", flush=True)
 
     @staticmethod
     def _measure_request_headers(prepared_request) -> int:
