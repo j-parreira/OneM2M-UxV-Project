@@ -141,7 +141,9 @@ Um `MetricRecord` por mensagem → escrito em CSV em `data/raw/`.
 
 | Problema | Estado |
 |---|---|
-| CoAP `send_command()` envia `{"m2m:cin": {"con": ...}}` em vez de flat JSON | **Não corrigir sem teste e2e** — ACME CSE v2025.11 CoAP binding pode exigir flat JSON com campos `op`, `fr`, `rvi` |
+| CoAP não conseguia ligar no Windows ("transport can not be bound to any-address") | **Corrigido (2026-05-31)**: bind em `callback_host` (LAN IP) em vez de `0.0.0.0`; aiocoap no Windows rejeita `0.0.0.0` |
+| CoAP requests sem opções oneM2M → RSC=4000 do CSE | **Corrigido (2026-05-31)**: FR/RQI/RVI/TY em opções 279/283/271/267; RSC lido de opção 307 |
+| Segunda tentativa de ligação CoAP falhava com porta já em uso | **Corrigido (2026-05-31)**: `connect()` chama `disconnect()` primeiro; `disconnect()` limpa todas as referências |
 | HTTP/CoAP callbacks inacessíveis se `CALLBACK_HOST=127.0.0.1` | Usar IP LAN real quando CSE corre em Docker Desktop na mesma máquina |
 | `_ensure_subscription()` falha se Android ainda não se registou | Iniciar Streamlit depois da app Android |
 

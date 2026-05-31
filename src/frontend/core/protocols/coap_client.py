@@ -6,6 +6,18 @@ Notifications are received via an embedded aiocoap server (CoAP callback server)
 running in a background asyncio event loop. The CSE container must be able to
 reach this server at callback_host:callback_coap_port.
 
+Binding: the callback server binds to callback_host (the LAN IP), NOT 0.0.0.0.
+aiocoap on Windows fails to bind to the any-address ("transport can not be bound
+to any-address"); binding to a specific IP works correctly.
+
+CoAP binding (TS-0010): oneM2M fields go in CoAP options, body = resource content.
+  - Option 279 (oneM2M-FR)  = originator (STRING/bytes)
+  - Option 283 (oneM2M-RQI) = request identifier (STRING/bytes)
+  - Option 271 (oneM2M-RVI) = release version (STRING/bytes, value b"3")
+  - Option 267 (oneM2M-TY)  = resource type (UINT, CREATE only)
+  - Option 307 (oneM2M-RSC) = response status code (UINT, read from response)
+Option numbers confirmed from ACME CSE v2025.11 CoAPthonTools.py source.
+
 CoAP header overhead (fixed) per RFC 7252:
   4-byte fixed header + token (0–8 bytes) + options (variable) + payload marker
 
@@ -21,16 +33,23 @@ from typing import Callable, Optional
 
 import aiocoap
 import aiocoap.resource as resource
+from aiocoap.optiontypes import OpaqueOption, UintOption
 
 from .base import ProtocolClient
 from ..config import Config
 
 _ORIGINATOR = "CAdmin"
-_CSE_ID = "id-in"
 _SUB_TEL_RN = "sub-coap-streamlit-tel"
 _SUB_ACK_RN = "sub-coap-streamlit-ack"
 
 _REQUEST_TIMEOUT_S = 10.0
+
+# oneM2M CoAP option numbers (ACME CSE v2025.11 — CoAPthonTools.py)
+_OPT_TY  = 267   # oneM2M-TY  (UINT  — resource type, CREATE only)
+_OPT_RVI = 271   # oneM2M-RVI (bytes — release version indicator)
+_OPT_FR  = 279   # oneM2M-FR  (bytes — originator)
+_OPT_RQI = 283   # oneM2M-RQI (bytes — request identifier)
+_OPT_RSC = 307   # oneM2M-RSC (bytes → int — response status, read-only)
 
 
 class CoapClient(ProtocolClient):
@@ -67,6 +86,10 @@ class CoapClient(ProtocolClient):
 
     def connect(self) -> None:
         """Start the asyncio event loop, CoAP context, and callback server."""
+        # Clean up any previous instance before starting fresh.
+        # Necessary because a failed bind leaves the socket allocated.
+        self.disconnect()
+
         self._loop = asyncio.new_event_loop()
         self._loop_thread = threading.Thread(
             target=self._run_loop, daemon=True, name="coap-loop"
@@ -87,18 +110,20 @@ class CoapClient(ProtocolClient):
     def send_command(self, payload: dict) -> tuple[float | None, bool]:
         """POST a command CIN to /cse-in/uxv/commands via CoAP CON."""
         con_str = json.dumps(payload)
+        # Body = resource content only (m2m:cin wrapper), not flat JSON
         body = json.dumps({"m2m:cin": {"con": con_str}}).encode()
         uri = f"{self._config.cse_coap_base}/cse-in/uxv/commands"
 
         t_start = time.monotonic_ns()
         future = asyncio.run_coroutine_threadsafe(
-            self._async_post(uri, body), self._loop
+            self._async_post(uri, body, ty=4),  # ty=4 = m2m:cin
+            self._loop,
         )
         try:
             rsc = future.result(timeout=_REQUEST_TIMEOUT_S + 1)
             t_end = time.monotonic_ns()
             latency_ms = (t_end - t_start) / 1_000_000
-            delivered = rsc == aiocoap.CREATED
+            delivered = rsc == 2001  # oneM2M CREATED
             return latency_ms, delivered
         except (TimeoutError, asyncio.TimeoutError, Exception):
             return None, False
@@ -112,13 +137,24 @@ class CoapClient(ProtocolClient):
     def disconnect(self) -> None:
         """Shut down the aiocoap context and stop the event loop."""
         if self._loop and self._coap_context:
-            asyncio.run_coroutine_threadsafe(
-                self._coap_context.shutdown(), self._loop
-            ).result(timeout=5.0)
+            try:
+                asyncio.run_coroutine_threadsafe(
+                    self._coap_context.shutdown(), self._loop
+                ).result(timeout=5.0)
+            except Exception:
+                pass
         if self._loop:
-            self._loop.call_soon_threadsafe(self._loop.stop)
+            try:
+                self._loop.call_soon_threadsafe(self._loop.stop)
+            except Exception:
+                pass
         if self._loop_thread:
             self._loop_thread.join(timeout=5.0)
+        # Clear references so connect() can safely re-initialise.
+        self._coap_context = None
+        self._loop = None
+        self._loop_thread = None
+        self._server_site = None
 
     def get_header_bytes(self, payload_size: int) -> int:
         """Estimate CoAP header overhead for a request of given payload size.
@@ -161,27 +197,55 @@ class CoapClient(ProtocolClient):
         self._server_site = resource.Site()
         self._server_site.add_resource(("notify",), _NotifyResource())
 
-        # Bind the callback server on all interfaces so Docker containers can reach it.
+        # Bind to callback_host (LAN IP), not 0.0.0.0.
+        # aiocoap on Windows fails to bind to the any-address (WinError 10048 /
+        # "transport can not be bound to any-address"); a specific IP works fine.
+        # The Docker container reaches us at callback_host:callback_coap_port anyway.
         self._coap_context = await aiocoap.Context.create_server_context(
             self._server_site,
-            bind=(("0.0.0.0", self._config.callback_coap_port)),
+            bind=((self._config.callback_host, self._config.callback_coap_port)),
         )
 
-    async def _async_post(self, uri: str, payload: bytes) -> aiocoap.numbers.codes.Code:
-        """Send a CON POST and return the response code."""
-        request = aiocoap.Message(
-            code=aiocoap.POST,
-            uri=uri,
-            payload=payload,
-        )
-        # Content-Format 50 = application/json
-        request.opt.content_format = 50
+    async def _async_post(self, uri: str, payload: bytes, ty: int = 0) -> int:
+        """Send a CON POST with oneM2M CoAP options; return the oneM2M RSC.
+
+        Parameters
+        ----------
+        uri:
+            Full CoAP URI including path.
+        payload:
+            Resource representation body (e.g. b'{"m2m:cin": {...}}').
+        ty:
+            oneM2M resource type (option 267). Pass 0 to omit (type inferred
+            from body wrapper key by the CSE).
+
+        Returns
+        -------
+        int
+            oneM2M RSC from response option 307, or 0 if not present.
+        """
+        rqi = str(uuid.uuid4())[:8]
+        request = aiocoap.Message(code=aiocoap.POST, uri=uri, payload=payload)
+        request.opt.content_format = 50  # application/json
+
+        # Mandatory oneM2M CoAP options (TS-0010 binding)
+        request.opt.add_option(OpaqueOption(_OPT_FR,  _ORIGINATOR.encode()))
+        request.opt.add_option(OpaqueOption(_OPT_RQI, rqi.encode()))
+        request.opt.add_option(OpaqueOption(_OPT_RVI, b"3"))
+        if ty > 0:
+            request.opt.add_option(UintOption(_OPT_TY, ty))
+
         try:
             response = await asyncio.wait_for(
                 self._coap_context.request(request).response,
                 timeout=_REQUEST_TIMEOUT_S,
             )
-            return response.code
+            # RSC is in option 307 (oneM2M-RSC) as big-endian integer bytes
+            rsc_opts = response.opt.get_option(_OPT_RSC)
+            if rsc_opts:
+                raw = rsc_opts[0].value  # OpaqueOption → bytes
+                return int.from_bytes(raw, "big") if raw else 0
+            return 0
         except asyncio.TimeoutError:
             raise TimeoutError("CoAP request timeout")
 
@@ -207,7 +271,8 @@ class CoapClient(ProtocolClient):
         }).encode()
         create_uri = f"{self._config.cse_coap_base}/{container_path}"
         future = asyncio.run_coroutine_threadsafe(
-            self._async_post(create_uri, body), self._loop
+            self._async_post(create_uri, body, ty=23),  # ty=23 = m2m:sub
+            self._loop,
         )
         try:
             future.result(timeout=_REQUEST_TIMEOUT_S)
@@ -215,7 +280,12 @@ class CoapClient(ProtocolClient):
             pass
 
     async def _async_delete(self, uri: str) -> None:
+        """Send a CON DELETE with oneM2M CoAP options (best-effort)."""
+        rqi = str(uuid.uuid4())[:8]
         request = aiocoap.Message(code=aiocoap.DELETE, uri=uri)
+        request.opt.add_option(OpaqueOption(_OPT_FR,  _ORIGINATOR.encode()))
+        request.opt.add_option(OpaqueOption(_OPT_RQI, rqi.encode()))
+        request.opt.add_option(OpaqueOption(_OPT_RVI, b"3"))
         try:
             await asyncio.wait_for(
                 self._coap_context.request(request).response,
