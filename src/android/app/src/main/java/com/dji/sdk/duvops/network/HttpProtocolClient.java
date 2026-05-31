@@ -7,12 +7,14 @@
  * <h3>Mapeamento flat JSON → HTTP (oneM2M TS-0010 HTTP binding)</h3>
  * <pre>
  * Flat JSON field  → HTTP element
- * op=1 (CREATE)   → POST
- * to               → URL path: http://host:port/{to}
+ * op=1 (CREATE)   → POST   (Content-Type: application/json;ty={ty})
+ * op=3 (UPDATE)   → PUT    (Content-Type: application/json, sem ty)
+ * op=4 (DELETE)   → DELETE (sem body)
+ * to               → URL path: http://host:port/{to}  ("id-in" → "cse-in")
  * fr               → X-M2M-Origin header
  * rqi              → X-M2M-RI header
  * rvi              → X-M2M-RVI header
- * ty               → Content-Type: application/json;ty={ty}
+ * ty               → Content-Type: application/json;ty={ty} (só em CREATE)
  * pc               → HTTP body (JSON)
  * rsc (response)   → X-M2M-RSC response header
  * </pre>
@@ -199,8 +201,23 @@ public class HttpProtocolClient implements ProtocolClient {
                         .addHeader("X-M2M-RVI",    rvi)
                         .addHeader("Accept",        "application/json")
                         .build();
+            } else if (op == 3) {
+                // UPDATE → HTTP PUT (op=3 ≠ POST: ACME CSE returns 4000 for POST on existing resource)
+                String contentType = "application/json";
+                RequestBody body = RequestBody.create(
+                        MediaType.parse(contentType),
+                        bodyStr.getBytes()
+                );
+                httpReq = new Request.Builder()
+                        .url(url)
+                        .put(body)
+                        .addHeader("X-M2M-Origin", fr)
+                        .addHeader("X-M2M-RI",     rqi)
+                        .addHeader("X-M2M-RVI",    rvi)
+                        .addHeader("Accept",        "application/json")
+                        .build();
             } else {
-                // CREATE/UPDATE/RETRIEVE — POST com body e Content-Type:ty
+                // CREATE — POST com body e Content-Type:ty
                 String contentType = (ty > 0)
                         ? "application/json;ty=" + ty
                         : "application/json";
