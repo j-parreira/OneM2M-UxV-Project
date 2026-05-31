@@ -181,8 +181,12 @@ public class HttpProtocolClient implements ProtocolClient {
             JSONObject pc = req.optJSONObject("pc");
             String bodyStr = (pc != null) ? pc.toString() : "{}";
 
-            // Construir URL: http://host:port/{to}
-            String url = "http://" + savedHost + ":" + savedPort + "/" + to;
+            // Construir URL: http://host:port/{path}
+            // Em HTTP REST, o CSE-Base é endereçado pelo resource name "cse-in", não pelo
+            // CSE-ID "id-in". O flat JSON usa "to"="id-in" para todos os protocolos,
+            // mas no HTTP a URL deve usar "cse-in" (rsc=4000 se usar "id-in" para POST).
+            String httpPath = "id-in".equals(to) ? "cse-in" : to;
+            String url = "http://" + savedHost + ":" + savedPort + "/" + httpPath;
 
             Request httpReq;
             if (op == 4) {
