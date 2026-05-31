@@ -99,6 +99,7 @@ public class OneM2MSession implements ProtocolClient, DroneCommandListener {
 
     // ── OneM2M operation codes ───────────────────────────────────────────────
     private static final int OP_CREATE = 1;
+    private static final int OP_UPDATE = 3;
     private static final int OP_NOTIFY = 5;
 
     // ── OneM2M resource type codes ───────────────────────────────────────────
@@ -110,6 +111,8 @@ public class OneM2MSession implements ProtocolClient, DroneCommandListener {
     // ── OneM2M response status codes ─────────────────────────────────────────
     private static final int RSC_OK       = 2000;
     private static final int RSC_CREATED  = 2001;
+    /** UPDATE bem-sucedido — poa actualizado. */
+    private static final int RSC_UPDATED  = 2004;
     /** Recurso já existe — tratado como sucesso para permitir reconnect. */
     private static final int RSC_CONFLICT = 4105;
     /**
@@ -516,7 +519,7 @@ public class OneM2MSession implements ProtocolClient, DroneCommandListener {
         }
 
         Runnable callback = pending.remove(rqi);
-        boolean ok = (rsc == RSC_CREATED || rsc == RSC_OK
+        boolean ok = (rsc == RSC_CREATED || rsc == RSC_OK || rsc == RSC_UPDATED
                 || rsc == RSC_CONFLICT || rsc == RSC_ORIGINATOR_ALREADY_REGISTERED);
 
         if (callback != null && ok) {
@@ -739,8 +742,30 @@ public class OneM2MSession implements ProtocolClient, DroneCommandListener {
                             .put("srv", new JSONArray().put("3"))
                             .put("rr",  true)
                             .put("poa", new JSONArray().put(poa)));
-            sendRequest(OP_CREATE, CSE_ID, TY_AE, pc, this::createTelemetryContainer);
+            // Always go through doUpdateAePoa next: if AE existed (4105/4117) the CREATE
+            // poa is ignored and the stale poa must be fixed via UPDATE before proceeding.
+            sendRequest(OP_CREATE, CSE_ID, TY_AE, pc, this::doUpdateAePoa);
         } catch (JSONException e) { Log.e(TAG, "doCreateAE: " + e.getMessage()); }
+    }
+
+    /**
+     * Passo 1c: actualiza o campo {@code poa} do AE com o URL correcto do transporte.
+     *
+     * <p>Necessário quando o AE já existia (rsc=4105/4117) — o CREATE acima é ignorado
+     * pelo CSE e o poa fica com o valor da sessão anterior (ex: {@code mqtt://} quando
+     * voltamos ao WebSocket). Sem este UPDATE, o CSE entrega notificações pelo transporte
+     * antigo e os comandos não chegam ao Android.
+     *
+     * <p>Se o AE foi acabado de criar (rsc=2001), o UPDATE é redundante mas inofensivo.
+     */
+    private void doUpdateAePoa() {
+        try {
+            String poa = transport.getPoaUrl();
+            JSONObject pc = new JSONObject()
+                    .put("m2m:ae", new JSONObject()
+                            .put("poa", new JSONArray().put(poa)));
+            sendRequest(OP_UPDATE, CSE_BASE + "/" + AE_NAME, 0, pc, this::createTelemetryContainer);
+        } catch (JSONException e) { Log.e(TAG, "doUpdateAePoa: " + e.getMessage()); }
     }
 
     /** Passo 2: criação do container {@code cse-in/uxv/telemetry} (mni=10). */
@@ -912,9 +937,10 @@ public class OneM2MSession implements ProtocolClient, DroneCommandListener {
                     .put("to",  to)
                     .put("fr",  aeOriginator)
                     .put("rqi", rqi)
-                    .put("rvi", "3")   // release version indicator — mandatory in v2025.11
-                    .put("ty",  ty)
-                    .put("pc",  pc);
+                    .put("rvi", "3");   // release version indicator — mandatory in v2025.11
+            // ty=0 means no resource type (UPDATE/DELETE) — omit to avoid CSE validation errors
+            if (ty > 0) request.put("ty", ty);
+            request.put("pc", pc);
 
             if (onSuccess != null) {
                 pending.put(rqi, onSuccess);
