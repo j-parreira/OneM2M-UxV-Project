@@ -123,6 +123,21 @@ public interface ProtocolClient {
     }
 
     /**
+     * Indica se {@link com.dji.sdk.duvops.network.OneM2MSession#registerAE()} deve apagar
+     * o AE antes de o recriar.
+     *
+     * <p>MQTT, HTTP, CoAP: {@code true} — o CSE entrega notificações via {@code poa}; a
+     * associação de transporte anterior fica obsoleta se o AE não for apagado primeiro.
+     * WebSocket: {@code false} — o CSE entrega notificações pela ligação WS activa;
+     * apagar o AE enquanto a ligação está aberta faz o CSE fechar a ligação.
+     *
+     * @return {@code true} se {@code registerAE()} deve enviar DELETE antes de CREATE
+     */
+    default boolean requiresAeDeleteBeforeRegister() {
+        return true;
+    }
+
+    /**
      * Envia um ACK de notificação ao CSE.
      *
      * <p>Por defeito delega a {@link #sendTelemetry(String)} — correcto para WebSocket

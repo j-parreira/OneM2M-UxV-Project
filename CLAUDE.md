@@ -42,6 +42,25 @@ Always use `python -m pip install` inside the relevant activated environment.
 
 ---
 
+## Dev Machine Networking (Windows 11 + Docker Desktop + WSL2)
+
+- WSL2 is always configured in **mirrored networking mode** (`networkingMode=mirrored`).
+  Docker container ports (1883, 8080, 8180, 5683) are accessible from WSL2 via the host
+  LAN IP, but external devices (Android RC) require the Windows Firewall to allow inbound.
+- The Windows Firewall Public profile has **GPO-managed rules only** (`LocalFirewallRules=N/A`).
+  Local inbound rules are ignored when the Wi-Fi is classified as Public.
+  **The Wi-Fi network must be set to Private** for the CSE ports to be reachable from the Android RC:
+  ```powershell
+  Set-NetConnectionProfile -Name "<wifi-ssid>" -NetworkCategory Private
+  ```
+- Firewall rules for CSE ports (1883, 8080, 8180) are already present as local rules and
+  apply automatically once the network profile is Private.
+- `Test-NetConnection <LAN-IP> <port>` from the same Windows machine is an unreliable test
+  (routing can differ from external traffic). Use `nc -zv` from inside WSL2, or test from
+  the Android device itself.
+
+---
+
 ## Protocols and Default Ports
 
 | Protocol  | Port | Transport |

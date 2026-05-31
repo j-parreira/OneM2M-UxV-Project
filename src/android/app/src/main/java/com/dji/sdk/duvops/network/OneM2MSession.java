@@ -686,6 +686,12 @@ public class OneM2MSession implements ProtocolClient, DroneCommandListener {
      */
     private void registerAE() {
         notifyStatus("Registering AE (" + aeOriginator + ")...");
+        // WebSocket: skip DELETE — the CSE closes the active WS connection when the
+        // associated AE is deleted, which kills the session we're trying to register on.
+        if (!transport.requiresAeDeleteBeforeRegister()) {
+            doCreateAE();
+            return;
+        }
         String rqi = "rqi-" + rqiCounter.incrementAndGet();
         try {
             JSONObject delReq = new JSONObject()

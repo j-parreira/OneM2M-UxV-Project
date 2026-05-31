@@ -108,6 +108,17 @@ public class NetworkManager implements ProtocolClient {
     }
 
     /**
+     * WebSocket: não apagar o AE antes de recriar — o CSE fecha a ligação WS activa
+     * quando o AE associado é apagado, o que mata a sessão imediatamente.
+     *
+     * @return {@code false} — DELETE é desnecessário e destrutivo para WS
+     */
+    @Override
+    public boolean requiresAeDeleteBeforeRegister() {
+        return false;
+    }
+
+    /**
      * Define o listener de debug para comandos recebidos.
      *
      * @param listener listener a notificar (pode ser {@code null})
