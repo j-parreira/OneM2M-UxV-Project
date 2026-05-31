@@ -324,6 +324,41 @@ class WebSocketClient(ProtocolClient):
         # 4117 = ACME CSE v2025.11 "originator already registered on active WS" — all OK.
         if rsc not in (2001, 4105, 4117):
             raise RuntimeError(f"AE registration failed: rsc={rsc}, resp={resp}")
+        # 4105/4117: AE already exists from a prior session (e.g. previous MQTT run).
+        # Its poa may be stale (mqtt://...). Update it so the CSE uses the active WS
+        # connection (associatedConnections) instead of attempting MQTT delivery.
+        if rsc in (4105, 4117):
+            self._update_ae_poa()
+
+    def _update_ae_poa(self) -> None:
+        """UPDATE the AE poa to the current WS URL.
+
+        Called on 4105/4117 during AE registration. Without this, a stale poa from a
+        prior MQTT session (mqtt://mosquitto:1883) causes the CSE to attempt MQTT delivery
+        instead of using the active WS connection (associatedConnections).
+        """
+        rqi = self._next_rqi()
+        req = {
+            "op": 3,   # UPDATE
+            "to": f"cse-in/{_AE_RN}",
+            "fr": _ORIGINATOR,
+            "rqi": rqi,
+            "rvi": "3",
+            "pc": {
+                "m2m:ae": {
+                    "poa": [self._config.cse_ws_url.rstrip("/")],
+                }
+            },
+        }
+        try:
+            resp = self._send_request(req, timeout=5.0)
+            rsc = resp.get("rsc") if resp else None
+            if rsc == 2004:
+                _log.debug("[WS] Updated AE poa to %s", self._config.cse_ws_url)
+            else:
+                print(f"[WS] AE poa update returned rsc={rsc}", flush=True)
+        except TimeoutError:
+            print("[WS] AE poa update timed out", flush=True)
 
     def _ensure_subscription(self, container_path: str, rn: str) -> Optional[str]:
         """Create a SUB resource; delete and re-create if it already exists.
