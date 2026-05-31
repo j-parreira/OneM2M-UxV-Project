@@ -63,6 +63,10 @@ services:
       # Patch: disable WS keepalive pings to prevent dropout under benchmark load.
       # See src/cse/patches/WebSocketServer.py for rationale.
       - ./patches/WebSocketServer.py:/usr/local/lib/python3.11/site-packages/acmecse/protocols/WebSocketServer.py:ro
+      # Patch: add Operation.NOTIFY -> POST to operationsMethodsMap.
+      # ACME CSE v2025.11 omits NOTIFY, causing KeyError when delivering CoAP notifications.
+      # See src/cse/patches/CoAPthonTools.py for rationale.
+      - ./patches/CoAPthonTools.py:/usr/local/lib/python3.11/site-packages/acmecse/helpers/CoAPthonTools.py:ro
     cap_add:
       - NET_ADMIN            # required for tc netem (Scenario 3)
     networks:

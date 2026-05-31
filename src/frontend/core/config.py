@@ -39,6 +39,14 @@ class Config:
     # container is the container's own loopback, NOT the host's Mosquitto broker.
     mqtt_broker_poa_host: str
 
+    # Hostname used by the CSE Docker container to reach THIS machine.
+    # Docker Desktop on Windows does NOT route UDP from containers to the host LAN IP.
+    # TCP works via host.docker.internal (192.168.65.254); UDP is blocked.
+    # Used as the `nu` host in HTTP/CoAP subscription notifications so the CSE
+    # container can POST back to the embedded callback server.
+    # Default: host.docker.internal (Docker Desktop magic hostname, TCP reachable).
+    docker_callback_host: str
+
     @property
     def cse_http_base(self) -> str:
         return f"http://{self.cse_host}:{self.cse_http_port}"
@@ -53,11 +61,24 @@ class Config:
 
     @property
     def callback_http_url(self) -> str:
+        """Local HTTP callback URL (for binding / testing; NOT for CSE nu field)."""
         return f"http://{self.callback_host}:{self.callback_http_port}/notify"
 
     @property
     def callback_coap_url(self) -> str:
+        """Local CoAP callback URL (for binding; NOT used as nu — Docker blocks UDP)."""
         return f"coap://{self.callback_host}:{self.callback_coap_port}/notify"
+
+    @property
+    def callback_http_docker_url(self) -> str:
+        """HTTP callback URL from the CSE container's perspective.
+
+        Uses docker_callback_host (host.docker.internal) so the CSE container
+        can reach the embedded HTTP callback server over TCP. Always HTTP —
+        Docker Desktop blocks UDP from containers, so CoAP notifications also
+        use this HTTP path.
+        """
+        return f"http://{self.docker_callback_host}:{self.callback_http_port}/notify"
 
 
 def load_config() -> Config:
@@ -82,4 +103,5 @@ def load_config() -> Config:
         callback_http_port=int(os.getenv("CALLBACK_HTTP_PORT", "8090")),
         callback_coap_port=int(os.getenv("CALLBACK_COAP_PORT", "5684")),
         mqtt_broker_poa_host=os.getenv("MQTT_BROKER_POA_HOST", "mosquitto"),
+        docker_callback_host=os.getenv("DOCKER_CALLBACK_HOST", "host.docker.internal"),
     )

@@ -256,14 +256,18 @@ CIN send: Californium 2.7.4 CON POST/PUT/DELETE para coap://cse_ip:5683/{to}
           rsc lido da opção 307 (oneM2M-RSC) da resposta
           "id-in" → "cse-in" no URI path (igual ao HTTP binding)
           sharedEndpoint (porta efémera) reutilizado entre requests
-AE poa:  ["coap://rc_ip:5684/notify"]   ← IP WiFi do RC, porta fixa 5684, path /notify (UDP)
-Notificações: CoapServer (Californium) na porta 5684 UDP, resource /notify
-              CSE envia POST/PUT com {"m2m:sgn":{...}}
-              ACK: CoAP 2.04 Changed (requiresExplicitNotifyAck = false)
+AE poa:  ["http://rc_ip:8182"]   ← HTTP/TCP (lab constraint — ver nota abaixo)
+Notificações: NanoHTTPD 2.3.1 na porta 8182 (TCP)
+              CSE faz POST HTTP com {"m2m:sgn":{...}}
+              ACK: HTTP 200 OK (requiresExplicitNotifyAck = false)
 ```
 
+> **Lab constraint (2026-05-31):** Docker Desktop no Windows bloqueia UDP de containers para
+> dispositivos LAN externos (confirmado empiricamente: `docker exec acme-cse python3 sendto`
+> não chega ao Californium do RC). Por isso o `poa` usa HTTP/TCP (porta 8182, NanoHTTPD) em vez
+> de CoAP/UDP (porta 5684). Pedidos CoAP outgoing (telemetria, ACKs) continuam em CoAP/UDP.
+> Documentar como constraint de laboratório no relatório.
 > Californium 2.7.4 (Java 8) — não usar 3.x (requer Java 11).
-> CoAP usa UDP — verificar que a LAN não bloqueia UDP entre container e RC.
 > build.gradle: usar `org.nanohttpd:nanohttpd:2.3.1` (Maven Central) + excluir `META-INF/legal/**`.
 
 ---
@@ -513,6 +517,7 @@ o mesmo originator em `associatedConnections`, reutiliza-a.
 | HTTP paths incorrectos `/id-in/...` | Paths corrector: `/cse-in/...` — já corrigido em CSE_BASE |
 | CoAP `CONFLICT` (4.09) não mapeado | `case CONFLICT: return 4105` adicionado — já corrigido |
 | CoAP rsc=5000 em todas as ops (4.00 BAD_REQUEST) | Binding incorreto (flat JSON no body); corrigido para opções CoAP 279/283/271/267 + body=pc only — já corrigido (2026-05-31) |
+| CoAP: Android nunca recebe notificações push do CSE (ack cni=0) | Docker Desktop no Windows bloqueia UDP de containers para dispositivos LAN externos; Californium CoapServer (porta 5684) nunca disparava. Corrigido (2026-05-31): poa mudou para `http://rc_ip:8182` (NanoHTTPD), notificações chegam via HTTP/TCP. |
 | `WifiManager.getConnectionInfo()` deprecated | `@SuppressWarnings("deprecation")` em HTTP e CoAP — RC usa API ≤ 29, funciona |
 
 ---
@@ -568,7 +573,7 @@ O `protocolClient` (= session) nunca muda — apenas o transport interno.
 | WebSocket | Sim (`sendAck` = `sendTelemetry`) | `{"op":5,"pc":{"m2m:sgn":{...}}}` | OkHttp callback |
 | MQTT | Sim (`sendAck` publica TOPIC_RESP) | `{"op":5,"pc":{"m2m:sgn":{...}}}` flat | Paho callback |
 | HTTP | Não (HTTP 200 = ACK) | `{"m2m:sgn":{...}}` directo | NanoHTTPD thread |
-| CoAP | Não (2.04 Changed = ACK) | `{"m2m:sgn":{...}}` directo | Californium thread |
+| CoAP | Não (HTTP 200 = ACK) | `{"m2m:sgn":{...}}` directo | NanoHTTPD thread |
 
 ---
 

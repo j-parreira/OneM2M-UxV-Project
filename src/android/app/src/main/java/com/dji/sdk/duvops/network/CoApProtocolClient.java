@@ -26,10 +26,12 @@
  * 307 = oneM2M-RSC (INTEGER — lido da resposta)
  * </pre>
  *
- * <h3>Notificações push</h3>
- * O CSE envia PUT/POST CoAP para {@code coap://rcIp:callbackPort/notify} com
- * body {@code {"m2m:sgn":{...}}}. O servidor responde 2.04 Changed — esse é o ACK.
- * Por isso {@link #requiresExplicitNotifyAck()} retorna {@code false}.
+ * <h3>Notificações push — HTTP callback (lab constraint)</h3>
+ * O Docker Desktop no Windows bloqueia UDP de containers para dispositivos LAN externos.
+ * Por isso, o poa do AE usa HTTP (TCP) em vez de CoAP (UDP) para receber notificações:
+ * {@code poa = ["http://rcIp:8182"]}. O CSE faz POST HTTP com body {@code {"m2m:sgn":{...}}}
+ * ao servidor NanoHTTPD embebido (porta 8182). Pedidos CoAP outgoing (telemetria, ACKs)
+ * continuam a usar CoAP/UDP normalmente.
  *
  * @see com.dji.sdk.duvops.network.ProtocolClient
  * @see com.dji.sdk.duvops.network.OneM2MSession
@@ -42,37 +44,40 @@ import android.util.Log;
 
 import org.eclipse.californium.core.CoapClient;
 import org.eclipse.californium.core.CoapHandler;
-import org.eclipse.californium.core.CoapResource;
 import org.eclipse.californium.core.CoapResponse;
-import org.eclipse.californium.core.CoapServer;
 import org.eclipse.californium.core.coap.CoAP;
 import org.eclipse.californium.core.coap.MediaTypeRegistry;
 import org.eclipse.californium.core.coap.Option;
 import org.eclipse.californium.core.coap.Request;
 import org.eclipse.californium.core.network.CoapEndpoint;
-import org.eclipse.californium.core.server.resources.CoapExchange;
 import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
+import java.util.HashMap;
+import java.util.Map;
+
+import fi.iki.elonen.NanoHTTPD;
 
 /**
- * Transporte CoAP oneM2M com servidor de callback Californium embebido.
+ * Transporte CoAP oneM2M com callback HTTP embebido (NanoHTTPD).
  *
- * <p>Utiliza Californium 2.7.4 (Java 8 compatível). Californium 3.x requer Java 11
- * que é incompatível com {@code compileOptions JavaVersion.VERSION_1_8}.
- *
- * <p>Diferentemente do WebSocket binding (flat JSON completo no body), o binding CoAP
- * do ACME CSE v2025.11 usa opções CoAP dedicadas para os metadados oneM2M e o body
- * contém apenas a representação do recurso (campo {@code pc} do flat JSON).
+ * <p>Utiliza Californium 2.7.4 (Java 8 compatível) para pedidos CoAP outgoing.
+ * Notificações são recebidas via HTTP/TCP (NanoHTTPD porta 8182) porque o Docker
+ * Desktop no Windows bloqueia UDP de containers para dispositivos LAN externos.
+ * Documentado como lab constraint no relatório académico.
  */
 public class CoApProtocolClient implements ProtocolClient {
 
     private static final String TAG = "CoApProtocolClient";
 
-    /** Porto do servidor de callback CoAP (UDP). */
-    private static final int CALLBACK_PORT = 5684;
+    /**
+     * Porto do servidor HTTP de callback (NanoHTTPD) para receber notificações do CSE.
+     * Diferente do HttpProtocolClient (8181) para evitar conflito ao trocar protocolo.
+     * Não usar CoAP/UDP (5684) — Docker Desktop bloqueia UDP de containers para LAN.
+     */
+    private static final int HTTP_CALLBACK_PORT = 8182;
 
     /** Content-Format 50 = application/json (RFC 7252). */
     private static final int CONTENT_FORMAT_JSON = MediaTypeRegistry.APPLICATION_JSON;
@@ -97,7 +102,8 @@ public class CoApProtocolClient implements ProtocolClient {
 
     // ── Estado ───────────────────────────────────────────────────────────────
 
-    private CoapServer callbackServer;
+    /** Servidor HTTP de callback — recebe notificações POST do CSE via TCP. */
+    private NanoHTTPD callbackServer;
     /** Endpoint partilhado para pedidos CoAP outgoing — evita criar novo socket por request. */
     private CoapEndpoint sharedEndpoint;
     private volatile boolean connected = false;
@@ -125,12 +131,16 @@ public class CoApProtocolClient implements ProtocolClient {
     // ── ProtocolClient ───────────────────────────────────────────────────────
 
     /**
-     * Inicia o servidor CoAP de callback e notifica o listener.
+     * Inicia o servidor HTTP de callback (NanoHTTPD) e o endpoint CoAP outgoing.
      *
      * <p>CoAP sobre UDP é connectionless — "connect" significa:
-     * 1. Obter IP WiFi do RC.
-     * 2. Iniciar {@code CoapServer} na porta {@value CALLBACK_PORT} (UDP).
-     * 3. Notificar o listener com {@code onConnectionStatusChange(true)}.
+     * 1. Obter IP WiFi do RC (necessário para o campo {@code poa}).
+     * 2. Iniciar servidor NanoHTTPD na porta {@value HTTP_CALLBACK_PORT} (TCP).
+     * 3. Criar endpoint Californium com porta efémera para pedidos outgoing.
+     * 4. Notificar o listener com {@code onConnectionStatusChange(true)}.
+     *
+     * <p>O servidor de callback usa HTTP/TCP porque Docker Desktop no Windows
+     * bloqueia UDP de containers para dispositivos LAN externos (confirmado empiricamente).
      *
      * @param host hostname ou IP do CSE
      * @param port porto CoAP do CSE (normalmente 5683)
@@ -144,41 +154,38 @@ public class CoApProtocolClient implements ProtocolClient {
         savedPort = port;
         wifiIp    = getWifiIpAddress();
 
-        callbackServer = new CoapServer();
-        // Adicionar resource /notify que recebe as notificações push do CSE
-        callbackServer.add(new NotifyResource());
-        // Bind na porta UDP de callback em todas as interfaces
-        callbackServer.addEndpoint(new CoapEndpoint.Builder()
-                .setInetSocketAddress(new InetSocketAddress("0.0.0.0", CALLBACK_PORT))
-                .build());
+        // Servidor HTTP de callback — recebe notificações POST do CSE via TCP.
+        // Porta 8182 (diferente de HttpProtocolClient:8181) para evitar conflito de porta.
+        callbackServer = new NotifyServer(HTTP_CALLBACK_PORT);
 
-        // Endpoint outgoing com porta efémera — partilhado por todos os pedidos
+        // Endpoint outgoing com porta efémera — partilhado por todos os pedidos CoAP
         sharedEndpoint = new CoapEndpoint.Builder()
                 .setInetSocketAddress(new InetSocketAddress("0.0.0.0", 0))
                 .build();
 
         try {
-            callbackServer.start();
+            callbackServer.start(NanoHTTPD.SOCKET_READ_TIMEOUT, false);
             sharedEndpoint.start();
             connected = true;
-            Log.d(TAG, "CoAP ready — callback server on " + wifiIp + ":" + CALLBACK_PORT);
+            Log.d(TAG, "CoAP ready — HTTP callback on " + wifiIp + ":" + HTTP_CALLBACK_PORT
+                    + " (CoAP outgoing to " + host + ":" + port + ")");
             listener.onConnectionStatusChange(true,
-                    "CoAP connected (callback: " + wifiIp + ":" + CALLBACK_PORT + ")");
-        } catch (Exception e) {
-            Log.e(TAG, "CoAP server start failed: " + e.getMessage());
+                    "CoAP connected (HTTP callback: " + wifiIp + ":" + HTTP_CALLBACK_PORT + ")");
+        } catch (IOException e) {
+            Log.e(TAG, "CoAP/HTTP callback server start failed: " + e.getMessage());
             listener.onConnectionStatusChange(false,
                     "CoAP callback server failed: " + e.getMessage());
         }
     }
 
     /**
-     * Para o servidor de callback CoAP e o endpoint outgoing.
+     * Para o servidor HTTP de callback e o endpoint CoAP outgoing.
      */
     @Override
     public void disconnect() {
         connected = false;
         if (callbackServer != null) {
-            callbackServer.destroy();
+            callbackServer.stop();
             callbackServer = null;
         }
         if (sharedEndpoint != null) {
@@ -337,16 +344,21 @@ public class CoApProtocolClient implements ProtocolClient {
     }
 
     /**
-     * @return URL do poa no formato {@code coap://rcIp:callbackPort}
+     * URL do poa no formato {@code http://rcIp:httpCallbackPort}.
+     *
+     * <p>Usa HTTP/TCP em vez de CoAP/UDP porque Docker Desktop no Windows bloqueia
+     * UDP de containers para dispositivos LAN externos. O CSE entrega as notificações
+     * de subscrição via HTTP POST ao servidor NanoHTTPD embebido.
+     *
+     * @return URL HTTP do poa desta instância
      */
     @Override
     public String getPoaUrl() {
-        // /notify path is required — Californium CoapServer has no catch-all handler
-        return "coap://" + (wifiIp != null ? wifiIp : "0.0.0.0") + ":" + CALLBACK_PORT + "/notify";
+        return "http://" + (wifiIp != null ? wifiIp : "0.0.0.0") + ":" + HTTP_CALLBACK_PORT;
     }
 
     /**
-     * CoAP: o ACK é o CoAP 2.04 Changed devolvido pelo servidor de callback — sem JSON adicional.
+     * CoAP/HTTP: o ACK é o HTTP 200 devolvido pelo servidor de callback — sem JSON adicional.
      *
      * @return {@code false}
      */
@@ -360,17 +372,7 @@ public class CoApProtocolClient implements ProtocolClient {
     /**
      * Mapeia código de resposta CoAP para código de resposta oneM2M (rsc).
      *
-     * <p>ACME CSE v2025.11 tipicamente devolve flat JSON com {@code rsc} no body —
-     * este mapeamento é usado apenas quando o body está vazio ou sem campo {@code rsc}.
-     * O {@code Log.d} abaixo permite verificar empiricamente o que o CSE envia.
-     *
-     * @param code código de resposta Californium
-     * @return rsc oneM2M correspondente
-     */
-    /**
-     * Fallback: mapeia código de resposta CoAP para código de resposta oneM2M (rsc).
-     *
-     * <p>Usado apenas quando a opção 307 (oneM2M-RSC) não está presente na resposta.
+     * <p>Fallback usado apenas quando a opção 307 (oneM2M-RSC) não está presente.
      * ACME CSE v2025.11 inclui sempre a opção 307 — este mapeamento é para robustez.
      *
      * @param code código de resposta Californium
@@ -419,31 +421,36 @@ public class CoApProtocolClient implements ProtocolClient {
     }
 
     /**
-     * Resource CoAP que recebe notificações push do CSE no path {@code /notify}.
+     * Servidor HTTP embebido (NanoHTTPD) que recebe notificações push do CSE.
      *
-     * <p>O CSE envia POST com body {@code {"m2m:sgn":{...}}}.
-     * A resposta 2.04 Changed é o ACK da notificação.
+     * <p>O CSE faz POST HTTP com body {@code {"m2m:sgn":{...}}}. A resposta HTTP 200
+     * serve como ACK — não é necessário enviar JSON adicional
+     * ({@link #requiresExplicitNotifyAck()} devolve {@code false}).
+     *
+     * <p>Solução de lab constraint: Docker Desktop no Windows não roteia UDP de containers
+     * para dispositivos LAN externos. O {@code poa} usa HTTP/TCP para garantir entrega.
      */
-    private class NotifyResource extends CoapResource {
+    private class NotifyServer extends NanoHTTPD {
 
-        NotifyResource() {
-            super("notify");
+        NotifyServer(int port) {
+            super(port);
         }
 
         @Override
-        public void handlePOST(CoapExchange exchange) {
-            String json = exchange.getRequestText();
-            if (json != null && !json.isEmpty() && rawMessageListener != null) {
-                rawMessageListener.onRawMessage(json);
+        public Response serve(IHTTPSession session) {
+            try {
+                // Ler body do POST — contém {"m2m:sgn":{...}}
+                Map<String, String> body = new HashMap<>();
+                session.parseBody(body);
+                String json = body.get("postData");
+                if (json != null && !json.isEmpty() && rawMessageListener != null) {
+                    rawMessageListener.onRawMessage(json);
+                }
+            } catch (Exception e) {
+                Log.e(TAG, "NotifyServer: " + e.getMessage());
             }
-            // 2.04 Changed = ACK da notificação (requiresExplicitNotifyAck = false)
-            exchange.respond(CoAP.ResponseCode.CHANGED);
-        }
-
-        @Override
-        public void handlePUT(CoapExchange exchange) {
-            // ACME CSE pode usar PUT em vez de POST para notificações
-            handlePOST(exchange);
+            // HTTP 200 = ACK da notificação (requiresExplicitNotifyAck = false)
+            return newFixedLengthResponse(Response.Status.OK, "application/json", "{}");
         }
     }
 }

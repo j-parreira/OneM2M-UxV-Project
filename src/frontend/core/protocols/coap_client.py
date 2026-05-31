@@ -2,13 +2,19 @@
 
 Uses Confirmable (CON) messages via aiocoap. No DTLS — not supported in v2025.11.
 
-Notifications are received via an embedded aiocoap server (CoAP callback server)
-running in a background asyncio event loop. The CSE container must be able to
-reach this server at callback_host:callback_coap_port.
+Notification delivery — Docker Desktop Windows limitation:
+    Docker Desktop does NOT route UDP from containers to the host (neither the
+    host LAN IP nor host.docker.internal). Since CoAP uses UDP, the CSE container
+    cannot deliver CoAP NOTIFY requests to an aiocoap callback server on the host.
+    TCP to host.docker.internal works, so notifications are received via an embedded
+    HTTP server (same port as http_client: CALLBACK_HTTP_PORT). The subscription nu
+    is set to http://host.docker.internal:CALLBACK_HTTP_PORT/notify.
 
-Binding: the callback server binds to callback_host (the LAN IP), NOT 0.0.0.0.
-aiocoap on Windows fails to bind to the any-address ("transport can not be bound
-to any-address"); binding to a specific IP works correctly.
+    This means CoAP notification latency includes HTTP TCP overhead instead of
+    CoAP UDP overhead. Document in the benchmark report as a Docker Desktop
+    lab environment constraint.
+
+    Outgoing requests (send_command, subscribe) still use CoAP UDP to the CSE.
 
 CoAP binding (TS-0010): oneM2M fields go in CoAP options, body = resource content.
   - Option 279 (oneM2M-FR)  = originator (STRING/bytes)
@@ -19,20 +25,20 @@ CoAP binding (TS-0010): oneM2M fields go in CoAP options, body = resource conten
 Option numbers confirmed from ACME CSE v2025.11 CoAPthonTools.py source.
 
 CoAP header overhead (fixed) per RFC 7252:
-  4-byte fixed header + token (0–8 bytes) + options (variable) + payload marker
+  4-byte fixed header + token (0-8 bytes) + options (variable) + payload marker
 
-This module runs a private asyncio event loop in a background thread to
-avoid conflicts with Streamlit's own event loop (if any).
+All async operations run in a private background event loop thread so
+Streamlit's synchronous API is not affected.
 """
 import asyncio
 import json
 import threading
 import time
 import uuid
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Callable, Optional
 
 import aiocoap
-import aiocoap.resource as resource
 from aiocoap.optiontypes import OpaqueOption, UintOption
 
 from .base import ProtocolClient
@@ -53,20 +59,19 @@ _OPT_RSC = 307   # oneM2M-RSC (bytes → int — response status, read-only)
 
 
 class CoapClient(ProtocolClient):
-    """CoAP OneM2M client with embedded aiocoap callback server.
+    """CoAP OneM2M client with HTTP callback server for notifications.
 
-    Notification flow:
-        1. connect() starts an aiocoap server on callback_host:callback_coap_port
-        2. Creates SUBs with nu=[coap://callback_host:callback_coap_port/notify]
-        3. CSE sends CON POST to that URI
-        4. The callback server dispatches to telemetry_cb / ack_cb
+    Notification flow (Docker Desktop TCP workaround):
+        1. connect() starts an HTTPServer on 0.0.0.0:callback_http_port
+        2. Creates SUBs with nu=[http://host.docker.internal:callback_http_port/notify]
+        3. CSE POSTs HTTP notifications to that URL (TCP, routed via Docker)
+        4. The HTTP callback server dispatches to telemetry_cb / ack_cb
 
-    The CoAP client uses Confirmable (CON) messages for all requests to
-    ensure delivery confirmation. ACK latency measures the time until the
-    CSE sends its CoAP ACK (not the oneM2M-level command ACK).
+    Outgoing CoAP requests (CIN create, subscribe, delete) use aiocoap over UDP.
+    The aiocoap context is a client-only context (no server binding needed).
 
-    All async operations run in a private background event loop thread so
-    Streamlit's synchronous API is not affected.
+    The subscription ri is captured at subscribe time and used to match
+    incoming notifications (ACME CSE puts ri, not path, in the sur field).
     """
 
     def __init__(self, config: Config) -> None:
@@ -74,43 +79,54 @@ class CoapClient(ProtocolClient):
         self._telemetry_cb: Optional[Callable[[dict], None]] = None
         self._ack_cb: Optional[Callable[[dict], None]] = None
 
-        # Private asyncio event loop running in background thread.
+        # ri of each subscription — ACME CSE puts ri (e.g. /id-in/subXXX)
+        # in the sur field of notifications, not the human-readable path.
+        self._tel_sub_ri: Optional[str] = None
+        self._ack_sub_ri: Optional[str] = None
+
+        # Private asyncio event loop for outgoing CoAP requests.
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._loop_thread: Optional[threading.Thread] = None
         self._coap_context: Optional[aiocoap.Context] = None
-        self._server_site: Optional[resource.Site] = None
+
+        # HTTP callback server — receives CSE notifications via TCP.
+        self._callback_server: Optional[HTTPServer] = None
+        self._callback_thread: Optional[threading.Thread] = None
 
     # ------------------------------------------------------------------
     # ProtocolClient interface
     # ------------------------------------------------------------------
 
     def connect(self) -> None:
-        """Start the asyncio event loop, CoAP context, and callback server."""
-        # Clean up any previous instance before starting fresh.
-        # Necessary because a failed bind leaves the socket allocated.
+        """Start the aiocoap client context, HTTP callback server, and subscriptions."""
+        # Clean up any previous instance to free ports and sockets.
         self.disconnect()
 
+        # Start HTTP server first — must be listening before creating SUBs.
+        self._start_callback_server()
+
+        # Start the background asyncio loop for outgoing CoAP requests.
         self._loop = asyncio.new_event_loop()
         self._loop_thread = threading.Thread(
             target=self._run_loop, daemon=True, name="coap-loop"
         )
         self._loop_thread.start()
 
-        # Initialise aiocoap context and callback server inside the loop.
+        # Initialise aiocoap client context inside the loop.
         future = asyncio.run_coroutine_threadsafe(self._async_connect(), self._loop)
-        future.result(timeout=_REQUEST_TIMEOUT_S)  # block until setup is done
+        future.result(timeout=_REQUEST_TIMEOUT_S)
 
-        self._ensure_subscription(
-            f"cse-in/uxv/telemetry", _SUB_TEL_RN
-        )
-        self._ensure_subscription(
-            f"cse-in/uxv/ack", _SUB_ACK_RN
-        )
+        self._tel_sub_ri = self._ensure_subscription("cse-in/uxv/telemetry", _SUB_TEL_RN)
+        self._ack_sub_ri = self._ensure_subscription("cse-in/uxv/ack", _SUB_ACK_RN)
+        if self._tel_sub_ri is None:
+            print("[CoAP] WARNING: telemetry subscription ri not captured", flush=True)
+        if self._ack_sub_ri is None:
+            print("[CoAP] WARNING: ack subscription ri not captured", flush=True)
+        print(f"[CoAP] tel_sub_ri={self._tel_sub_ri}  ack_sub_ri={self._ack_sub_ri}", flush=True)
 
     def send_command(self, payload: dict) -> tuple[float | None, bool]:
         """POST a command CIN to /cse-in/uxv/commands via CoAP CON."""
         con_str = json.dumps(payload)
-        # Body = resource content only (m2m:cin wrapper), not flat JSON
         body = json.dumps({"m2m:cin": {"con": con_str}}).encode()
         uri = f"{self._config.cse_coap_base}/cse-in/uxv/commands"
 
@@ -120,12 +136,14 @@ class CoapClient(ProtocolClient):
             self._loop,
         )
         try:
-            rsc = future.result(timeout=_REQUEST_TIMEOUT_S + 1)
+            rsc, _ = future.result(timeout=_REQUEST_TIMEOUT_S + 1)
             t_end = time.monotonic_ns()
             latency_ms = (t_end - t_start) / 1_000_000
             delivered = rsc == 2001  # oneM2M CREATED
+            print(f"[CoAP] send_command rsc={rsc} latency={latency_ms:.1f}ms delivered={delivered}", flush=True)
             return latency_ms, delivered
-        except (TimeoutError, asyncio.TimeoutError, Exception):
+        except Exception as exc:
+            print(f"[CoAP] send_command FAILED: {exc!r}", flush=True)
             return None, False
 
     def subscribe_telemetry(self, callback: Callable[[dict], None]) -> None:
@@ -135,7 +153,30 @@ class CoapClient(ProtocolClient):
         self._ack_cb = callback
 
     def disconnect(self) -> None:
-        """Shut down the aiocoap context and stop the event loop."""
+        """Shut down the aiocoap context, HTTP callback server, and event loop.
+
+        Deletes CSE subscriptions before stopping to prevent stale deliveries
+        to port 8090 from interfering with the next protocol client that uses
+        the same callback URL (e.g. switching from CoAP to HTTP and back).
+        Also makes reconnect faster: DELETE in _ensure_subscription gets 404
+        immediately instead of waiting for the CSE to confirm deletion.
+        """
+        # Delete subscriptions in the CSE before shutting down the context.
+        # Must be done while the loop and context are still running.
+        if self._loop and self._coap_context:
+            for container_path, rn in [
+                ("cse-in/uxv/telemetry", _SUB_TEL_RN),
+                ("cse-in/uxv/ack", _SUB_ACK_RN),
+            ]:
+                uri = f"{self._config.cse_coap_base}/{container_path}/{rn}"
+                del_fut = asyncio.run_coroutine_threadsafe(
+                    self._async_delete(uri), self._loop
+                )
+                try:
+                    del_fut.result(timeout=5.0)
+                except Exception:
+                    pass
+
         if self._loop and self._coap_context:
             try:
                 asyncio.run_coroutine_threadsafe(
@@ -150,29 +191,46 @@ class CoapClient(ProtocolClient):
                 pass
         if self._loop_thread:
             self._loop_thread.join(timeout=5.0)
-        # Clear references so connect() can safely re-initialise.
+        if self._callback_server:
+            try:
+                self._callback_server.shutdown()
+            except Exception:
+                pass
+        if self._callback_thread:
+            self._callback_thread.join(timeout=3.0)
+        # Clear all references so connect() can re-initialise cleanly.
         self._coap_context = None
         self._loop = None
         self._loop_thread = None
-        self._server_site = None
+        self._callback_server = None
+        self._callback_thread = None
+        self._tel_sub_ri = None
+        self._ack_sub_ri = None
 
     def get_header_bytes(self, payload_size: int) -> int:
         """Estimate CoAP header overhead for a request of given payload size.
 
         Fixed header: 4 bytes (version, type, TKL, code, message ID).
         Token: 8 bytes (typical for random tokens).
-        Uri-Host option: 1 option header + host bytes (est. 2 + len(host)).
-        Uri-Port option: 1 option header + 2 bytes.
-        Uri-Path option: 1 option header + path bytes (est. per segment).
-        Content-Format option: 1 option header + 1 byte.
+        Uri-Host option: 2 + len(host) bytes.
+        Uri-Port, Uri-Path, Content-Format options: approximately 10 bytes.
         Payload marker: 1 byte (0xFF).
+
+        Parameters
+        ----------
+        payload_size:
+            Size of the request payload in bytes (unused in this estimate).
+
+        Returns
+        -------
+        int
+            Estimated header overhead in bytes.
         """
         host_len = len(self._config.cse_host)
-        # Approximate: 4 fixed + 8 token + 10 uri-host/port options + 4 uri-path + 2 cf + 1 marker
-        return 4 + 8 + (2 + host_len) + 4 + 2 + 1
+        return 4 + 8 + (2 + host_len) + 10 + 1
 
     # ------------------------------------------------------------------
-    # Async internals
+    # Async internals (outgoing CoAP requests)
     # ------------------------------------------------------------------
 
     def _run_loop(self) -> None:
@@ -181,33 +239,16 @@ class CoapClient(ProtocolClient):
         self._loop.run_forever()
 
     async def _async_connect(self) -> None:
-        """Initialise aiocoap context and start the callback server."""
-        client = self
+        """Initialise aiocoap client context for outgoing requests only.
 
-        class _NotifyResource(resource.Resource):
-            """CoAP resource that receives CSE push notifications."""
-            async def render_post(self, request):
-                try:
-                    body = json.loads(request.payload.decode())
-                    client._dispatch_notification(body)
-                except (json.JSONDecodeError, UnicodeDecodeError):
-                    pass
-                return aiocoap.Message(code=aiocoap.CHANGED)
+        No server binding — notifications arrive via the HTTP callback server.
+        """
+        self._coap_context = await aiocoap.Context.create_client_context()
 
-        self._server_site = resource.Site()
-        self._server_site.add_resource(("notify",), _NotifyResource())
-
-        # Bind to callback_host (LAN IP), not 0.0.0.0.
-        # aiocoap on Windows fails to bind to the any-address (WinError 10048 /
-        # "transport can not be bound to any-address"); a specific IP works fine.
-        # The Docker container reaches us at callback_host:callback_coap_port anyway.
-        self._coap_context = await aiocoap.Context.create_server_context(
-            self._server_site,
-            bind=((self._config.callback_host, self._config.callback_coap_port)),
-        )
-
-    async def _async_post(self, uri: str, payload: bytes, ty: int = 0) -> int:
-        """Send a CON POST with oneM2M CoAP options; return the oneM2M RSC.
+    async def _async_post(
+        self, uri: str, payload: bytes, ty: int = 0
+    ) -> tuple[int, bytes]:
+        """Send a CON POST with oneM2M CoAP options.
 
         Parameters
         ----------
@@ -216,13 +257,13 @@ class CoapClient(ProtocolClient):
         payload:
             Resource representation body (e.g. b'{"m2m:cin": {...}}').
         ty:
-            oneM2M resource type (option 267). Pass 0 to omit (type inferred
-            from body wrapper key by the CSE).
+            oneM2M resource type (option 267). Pass 0 to omit.
 
         Returns
         -------
-        int
-            oneM2M RSC from response option 307, or 0 if not present.
+        tuple[int, bytes]
+            (oneM2M RSC from option 307, raw response payload bytes).
+            RSC = 0 if option 307 not present.
         """
         rqi = str(uuid.uuid4())[:8]
         request = aiocoap.Message(code=aiocoap.POST, uri=uri, payload=payload)
@@ -240,18 +281,34 @@ class CoapClient(ProtocolClient):
                 self._coap_context.request(request).response,
                 timeout=_REQUEST_TIMEOUT_S,
             )
-            # RSC is in option 307 (oneM2M-RSC) as big-endian integer bytes
             rsc_opts = response.opt.get_option(_OPT_RSC)
+            rsc = 0
             if rsc_opts:
                 raw = rsc_opts[0].value  # OpaqueOption → bytes
-                return int.from_bytes(raw, "big") if raw else 0
-            return 0
+                rsc = int.from_bytes(raw, "big") if raw else 0
+            return rsc, response.payload
         except asyncio.TimeoutError:
             raise TimeoutError("CoAP request timeout")
 
-    def _ensure_subscription(self, container_path: str, rn: str) -> None:
-        """Synchronously delete + re-create a SUB resource via CoAP."""
-        # Delete existing subscription (best-effort).
+    def _ensure_subscription(self, container_path: str, rn: str) -> Optional[str]:
+        """Delete existing SUB + create fresh one via CoAP; return subscription ri.
+
+        The ri is captured from the CSE response body and used later to match
+        the sur field in incoming HTTP notifications.
+
+        Parameters
+        ----------
+        container_path:
+            CSE-relative path to the container (e.g. "cse-in/uxv/telemetry").
+        rn:
+            Resource name for the subscription.
+
+        Returns
+        -------
+        Optional[str]
+            The ri of the created subscription, or None on failure.
+        """
+        # Delete existing (best-effort — may not exist).
         del_uri = f"{self._config.cse_coap_base}/{container_path}/{rn}"
         del_future = asyncio.run_coroutine_threadsafe(
             self._async_delete(del_uri), self._loop
@@ -261,11 +318,14 @@ class CoapClient(ProtocolClient):
         except Exception:
             pass
 
-        # Create subscription with our CoAP callback URI.
+        # Create subscription with HTTP callback nu (CSE container can reach via TCP).
         body = json.dumps({
             "m2m:sub": {
                 "rn": rn,
-                "nu": [self._config.callback_coap_url],
+                # nu uses docker_callback_host (host.docker.internal) because
+                # Docker Desktop blocks UDP but routes TCP to the host.
+                # CoAP notifications arrive via HTTP (lab constraint — see module docstring).
+                "nu": [self._config.callback_http_docker_url],
                 "enc": {"net": [3]},
             }
         }).encode()
@@ -275,9 +335,85 @@ class CoapClient(ProtocolClient):
             self._loop,
         )
         try:
-            future.result(timeout=_REQUEST_TIMEOUT_S)
-        except Exception:
-            pass
+            rsc, resp_payload = future.result(timeout=_REQUEST_TIMEOUT_S)
+            print(
+                f"[CoAP] subscribe {container_path}/{rn} rsc={rsc} "
+                f"nu={self._config.callback_http_docker_url}",
+                flush=True,
+            )
+            if rsc == 2001 and resp_payload:
+                try:
+                    body_dict = json.loads(resp_payload.decode())
+                    ri = body_dict.get("m2m:sub", {}).get("ri")
+                    return ri
+                except (json.JSONDecodeError, UnicodeDecodeError):
+                    pass
+            elif rsc in (4000, 4001, 4005):
+                # Conflict — DELETE timed out, old subscription still exists.
+                # GET it to retrieve its ri so notifications can be matched.
+                print(
+                    f"[CoAP] subscribe conflict rsc={rsc} — retrieving existing ri",
+                    flush=True,
+                )
+                return self._get_sub_ri(container_path, rn)
+        except Exception as exc:
+            print(f"[CoAP] subscribe {container_path}/{rn} error: {exc!r}", flush=True)
+        return None
+
+    def _get_sub_ri(self, container_path: str, rn: str) -> Optional[str]:
+        """GET an existing subscription by path and return its ri.
+
+        Used as a fallback when CREATE returns conflict (4000/4001/4005),
+        meaning the previous DELETE timed out and the subscription still exists.
+        We reuse the existing subscription's ri so notification matching works.
+
+        Parameters
+        ----------
+        container_path:
+            CSE-relative container path (e.g. "cse-in/uxv/telemetry").
+        rn:
+            Subscription resource name.
+
+        Returns
+        -------
+        Optional[str]
+            The ri from the existing subscription, or None on failure.
+        """
+        uri = f"{self._config.cse_coap_base}/{container_path}/{rn}"
+        future = asyncio.run_coroutine_threadsafe(
+            self._async_get(uri), self._loop
+        )
+        try:
+            rsc, payload = future.result(timeout=_REQUEST_TIMEOUT_S)
+            if rsc in (2000, 2001) and payload:
+                body = json.loads(payload.decode())
+                ri = body.get("m2m:sub", {}).get("ri")
+                print(f"[CoAP] existing sub ri={ri}", flush=True)
+                return ri
+        except Exception as exc:
+            print(f"[CoAP] get existing sub error: {exc!r}", flush=True)
+        return None
+
+    async def _async_get(self, uri: str) -> tuple[int, bytes]:
+        """Send a CON GET with oneM2M options; return (rsc, payload)."""
+        rqi = str(uuid.uuid4())[:8]
+        request = aiocoap.Message(code=aiocoap.GET, uri=uri)
+        request.opt.add_option(OpaqueOption(_OPT_FR,  _ORIGINATOR.encode()))
+        request.opt.add_option(OpaqueOption(_OPT_RQI, rqi.encode()))
+        request.opt.add_option(OpaqueOption(_OPT_RVI, b"3"))
+        try:
+            response = await asyncio.wait_for(
+                self._coap_context.request(request).response,
+                timeout=_REQUEST_TIMEOUT_S,
+            )
+            rsc_opts = response.opt.get_option(_OPT_RSC)
+            rsc = 0
+            if rsc_opts:
+                raw = rsc_opts[0].value
+                rsc = int.from_bytes(raw, "big") if raw else 0
+            return rsc, response.payload
+        except asyncio.TimeoutError:
+            raise TimeoutError("CoAP GET timeout")
 
     async def _async_delete(self, uri: str) -> None:
         """Send a CON DELETE with oneM2M CoAP options (best-effort)."""
@@ -294,24 +430,82 @@ class CoapClient(ProtocolClient):
         except Exception:
             pass
 
+    # ------------------------------------------------------------------
+    # HTTP callback server (receives CSE notifications)
+    # ------------------------------------------------------------------
+
+    def _start_callback_server(self) -> None:
+        """Start the HTTP callback server on 0.0.0.0:callback_http_port."""
+        client = self
+
+        class _NotifyHandler(BaseHTTPRequestHandler):
+            """Handles CSE notification POSTs delivered via HTTP."""
+            def do_POST(self):  # noqa: N802
+                length = int(self.headers.get("Content-Length", 0))
+                body_bytes = self.rfile.read(length)
+                self.send_response(200)
+                self.end_headers()
+                try:
+                    body = json.loads(body_bytes.decode())
+                except (json.JSONDecodeError, UnicodeDecodeError):
+                    return
+                client._dispatch_notification(body)
+
+            def log_message(self, fmt, *args):
+                pass  # suppress access log noise in Streamlit terminal
+
+        self._callback_server = HTTPServer(
+            ("0.0.0.0", self._config.callback_http_port),
+            _NotifyHandler,
+        )
+        self._callback_thread = threading.Thread(
+            target=self._callback_server.serve_forever,
+            daemon=True,
+            name="coap-http-callback",
+        )
+        self._callback_thread.start()
+
     def _dispatch_notification(self, body: dict) -> None:
-        """Parse a CSE notification and call the appropriate callback."""
+        """Parse a CSE notification POST and call the appropriate callback.
+
+        ACME CSE puts the subscription ri (e.g. /id-in/subXXX) in the sur
+        field, not the human-readable path. Match against ri captured at
+        connect time.
+
+        Parameters
+        ----------
+        body:
+            Parsed JSON body of the notification POST.
+        """
         sgn = body.get("m2m:sgn", {})
+        sur = sgn.get("sur", "")
+
+        # Subscription verification request — HTTP 200 already sent; skip.
         if sgn.get("vrq"):
+            print(f"[CoAP] vrq sur={sur!r} — 200 already sent", flush=True)
             return
 
         nev = sgn.get("nev", {})
         rep = nev.get("rep", {})
         cin = rep.get("m2m:cin", {})
         con_raw = cin.get("con", "")
-        sur = sgn.get("sur", "")
 
         try:
             con = json.loads(con_raw) if isinstance(con_raw, str) else con_raw
         except (json.JSONDecodeError, TypeError):
             return
 
-        if "telemetry" in sur and self._telemetry_cb:
-            self._telemetry_cb(con)
-        elif "ack" in sur and self._ack_cb:
-            self._ack_cb(con)
+        is_tel = self._tel_sub_ri is not None and self._tel_sub_ri in sur
+        is_ack = self._ack_sub_ri is not None and self._ack_sub_ri in sur
+        print(f"[CoAP] notify sur={sur!r} is_tel={is_tel} is_ack={is_ack}", flush=True)
+
+        if is_tel and self._telemetry_cb:
+            try:
+                self._telemetry_cb(con)
+            except Exception as exc:
+                print(f"[CoAP] telemetry_cb raised: {exc!r}", flush=True)
+        elif is_ack and self._ack_cb:
+            try:
+                self._ack_cb(con)
+            except Exception as exc:
+                print(f"[CoAP] ack_cb raised: {exc!r}", flush=True)

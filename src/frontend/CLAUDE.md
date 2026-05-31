@@ -59,9 +59,10 @@ Copiar `.env.example` para `.env` e preencher com os IPs reais da LAN.
 | `CSE_WS_PORT` | `8180` | WebSocket binding do ACME CSE |
 | `CSE_COAP_PORT` | `5683` | CoAP binding do ACME CSE (UDP) |
 | `DATA_RAW_DIR` | `../../data/raw` | Relativo a `src/frontend/` |
-| `CALLBACK_HOST` | `127.0.0.1` | **IP LAN desta máquina** (não 127.0.0.1 em LAN real — Docker não alcança loopback) |
-| `CALLBACK_HTTP_PORT` | `8090` | Servidor HTTP embutido para notificações (HTTP transport) |
-| `CALLBACK_COAP_PORT` | `5684` | Servidor CoAP embutido para notificações (CoAP transport) |
+| `CALLBACK_HOST` | `127.0.0.1` | **IP LAN desta máquina** (não 127.0.0.1 em LAN real — Docker não alcança loopback). Usado apenas para bind local. |
+| `CALLBACK_HTTP_PORT` | `8090` | Servidor HTTP embutido para notificações (HTTP e CoAP transport) |
+| `CALLBACK_COAP_PORT` | `5685` | Porta CoAP (reservada; não usada como nu — Docker Desktop bloqueia UDP de containers) |
+| `DOCKER_CALLBACK_HOST` | `host.docker.internal` | Hostname desta máquina **visto de dentro do container**. Docker Desktop roteia TCP via este hostname (192.168.65.254). Usado nas URLs `nu` de subscriptions HTTP e CoAP. **Não alterar** sem perceber o networking Docker Desktop. |
 
 ---
 
@@ -141,10 +142,12 @@ Um `MetricRecord` por mensagem → escrito em CSV em `data/raw/`.
 
 | Problema | Estado |
 |---|---|
-| CoAP não conseguia ligar no Windows ("transport can not be bound to any-address") | **Corrigido (2026-05-31)**: bind em `callback_host` (LAN IP) em vez de `0.0.0.0`; aiocoap no Windows rejeita `0.0.0.0` |
+| CoAP não conseguia ligar no Windows ("transport can not be bound to any-address") | **Corrigido (2026-05-31)**: bind em `callback_host` (LAN IP) em vez de `0.0.0.0`; aiocoap no Windows rejeita `0.0.0.0`. Agora irrelevante — aiocoap já não faz bind de servidor. |
 | CoAP requests sem opções oneM2M → RSC=4000 do CSE | **Corrigido (2026-05-31)**: FR/RQI/RVI/TY em opções 279/283/271/267; RSC lido de opção 307 |
 | Segunda tentativa de ligação CoAP falhava com porta já em uso | **Corrigido (2026-05-31)**: `connect()` chama `disconnect()` primeiro; `disconnect()` limpa todas as referências |
-| HTTP/CoAP callbacks inacessíveis se `CALLBACK_HOST=127.0.0.1` | Usar IP LAN real quando CSE corre em Docker Desktop na mesma máquina |
+| Docker Desktop bloqueia UDP de containers → CSE não consegue entregar notificações CoAP (Streamlit) | **Corrigido (2026-05-31)**: `coap_client.py` usa HTTP callback server + `nu=http://host.docker.internal:8090/notify`. Outgoing requests continuam em CoAP UDP. Documentar no relatório como constraint de laboratório. |
+| Docker Desktop bloqueia UDP de containers → CSE não consegue entregar notificações CoAP (Android RC) | **Corrigido (2026-05-31)**: `CoApProtocolClient.java` usa NanoHTTPD (porta 8182) em vez de Californium CoapServer (UDP). `poa=["http://rc_ip:8182"]`. Mesmo constraint — ambas as pontas usam HTTP para notificações. |
+| HTTP/CoAP callbacks com `CALLBACK_HOST=127.0.0.1` inacessíveis ao CSE container | **Corrigido (2026-05-31)**: `nu` usa `DOCKER_CALLBACK_HOST=host.docker.internal` (TCP reachable). `CALLBACK_HOST` só serve para bind local. |
 | `_ensure_subscription()` falha se Android ainda não se registou | Iniciar Streamlit depois da app Android |
 
 ---

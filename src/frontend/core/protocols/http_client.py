@@ -36,13 +36,14 @@ class HttpClient(ProtocolClient):
     """HTTP OneM2M client with embedded push notification server.
 
     Notification flow:
-        1. connect() starts an HTTPServer on callback_host:callback_http_port
-        2. Creates SUBs with nu=[callback_http_url]
-        3. CSE POSTs notifications (JSON) to callback_http_url
+        1. connect() starts an HTTPServer on 0.0.0.0:callback_http_port
+        2. Creates SUBs with nu=[callback_http_docker_url]  (host.docker.internal)
+        3. CSE POSTs notifications (JSON) to that URL
         4. The embedded server dispatches to telemetry_cb / ack_cb
 
-    The CSE Docker container must have a route to callback_host — use the
-    host's LAN IP in .env (CALLBACK_HOST), not 127.0.0.1.
+    The nu URL must use docker_callback_host (host.docker.internal) so the
+    CSE container can reach the callback server via TCP. The LAN IP
+    (CALLBACK_HOST) is not reachable from Docker Desktop containers.
     """
 
     def __init__(self, config: Config) -> None:
@@ -117,7 +118,26 @@ class HttpClient(ProtocolClient):
         self._ack_cb = callback
 
     def disconnect(self) -> None:
-        """Stop the callback server."""
+        """Delete CSE subscriptions, then stop the callback server.
+
+        Deleting subscriptions prevents stale deliveries to port 8090 when
+        switching to another protocol client that uses the same callback URL.
+        Must be done before stopping the callback server so the CSE doesn't
+        retry delivery after a partial teardown.
+        """
+        for sub_url in [
+            f"{self._config.cse_http_base}/cse-in/uxv/telemetry/{_SUB_TEL_RN}",
+            f"{self._config.cse_http_base}/cse-in/uxv/ack/{_SUB_ACK_RN}",
+        ]:
+            try:
+                self._session.delete(
+                    sub_url,
+                    headers=self._m2m_headers(str(uuid.uuid4())),
+                    timeout=3.0,
+                )
+            except Exception:
+                pass
+
         if self._callback_server:
             self._callback_server.shutdown()
         if self._callback_thread:
@@ -171,9 +191,10 @@ class HttpClient(ProtocolClient):
         body = {
             "m2m:sub": {
                 "rn": rn,
-                # nu: the CSE will POST notifications to this URL.
-                # The callback URL must be reachable from the CSE Docker container.
-                "nu": [self._config.callback_http_url],
+                # nu must be reachable from INSIDE the CSE Docker container.
+                # callback_http_docker_url uses host.docker.internal (TCP, reachable).
+                # callback_http_url uses the LAN IP, which Docker Desktop blocks.
+                "nu": [self._config.callback_http_docker_url],
                 "enc": {"net": [3]},  # notify on resource creation
             }
         }
