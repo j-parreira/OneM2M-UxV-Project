@@ -191,15 +191,15 @@ connect(host, 8180, serialNumber)
 | `OneM2MSession` (decorator) | Protocol-agnostic; partilhado pelos 4 transportes; reconnect storm fix |
 | `MqttProtocolClient` | Paho 1.2.5; TOPIC_REQ/RESP/NOTIF; ACK via TOPIC_RESP (override) |
 | `HttpProtocolClient` | OkHttp async POST + NanoHTTPD 2.3.1 callback (porta 8181) |
-| `CoApProtocolClient` | Californium 2.7.4 CON POST + CoapServer callback (porta 5684); CONFLICT case adicionado |
+| `CoApProtocolClient` | Californium 2.7.4; opções CoAP 279/283/271/267 (TS-0010 binding); RSC de opção 307; UPDATE→PUT; id-in→cse-in |
 | Protocol selector spinner | Spinner na barra superior: WebSocket / MQTT / HTTP / CoAP |
 
 ### Pendente 🔜 (para benchmark)
 | Item | Notas |
 |---|---|
 | End-to-end MQTT test | Testar registo AE + notificações vs ACME CSE real |
-| End-to-end HTTP test | Verificar callback reachability (Docker → RC WiFi IP) |
-| End-to-end CoAP test | Flat JSON body vs ACME CSE CoAP handler — verificar parsing |
+| End-to-end HTTP test | Confirmado OK (2026-05-25); verificar se Streamlit recebe telemetria |
+| End-to-end CoAP test | Opções CoAP corrigidas (2026-05-31) — testar contra ACME CSE real |
 | Benchmark runs (S1, S2) | ≥30 runs × 4 protocolos |
 
 ---
@@ -249,10 +249,13 @@ Notificações: NanoHTTPD 2.3.1 na porta 8181
 ### CoAP — `CoApProtocolClient.java` (✅ COMPLETO)
 
 ```
-CIN send: Californium 2.7.4 CON POST assíncrono para coap://cse_ip:5683/{to}
-          Body: flat JSON completo (igual ao WS binding — sem URI query params)
+CIN send: Californium 2.7.4 CON POST/PUT/DELETE para coap://cse_ip:5683/{to}
+          Opções CoAP: 279=FR (originator), 283=RQI, 271=RVI, 267=TY (só CREATE)
+          Body: apenas pc (representação do recurso) — sem campos op/fr/rqi no body
           Content-Format: 50 (application/json)
-          sharedEndpoint (porta efémera) reutilizado entre requests — sem criar socket por send
+          rsc lido da opção 307 (oneM2M-RSC) da resposta
+          "id-in" → "cse-in" no URI path (igual ao HTTP binding)
+          sharedEndpoint (porta efémera) reutilizado entre requests
 AE poa:  ["coap://rc_ip:5684/notify"]   ← IP WiFi do RC, porta fixa 5684, path /notify (UDP)
 Notificações: CoapServer (Californium) na porta 5684 UDP, resource /notify
               CSE envia POST/PUT com {"m2m:sgn":{...}}
@@ -508,7 +511,8 @@ o mesmo originator em `associatedConnections`, reutiliza-a.
 | Notificações não chegam sem `poa` | `poa=['ws://host:port']` obrigatório no registo AE — já corrigido |
 | `nu='/id-in/uxv'` não entregava notificações | `nu=aeOriginator` correcto — já corrigido |
 | HTTP paths incorrectos `/id-in/...` | Paths corrector: `/cse-in/...` — já corrigido em CSE_BASE |
-| CoAP `CONFLICT` (4.09) não mapeado | `case CONFLICT: return 4105` adicionado; `Log.d` para verificação empírica — já corrigido |
+| CoAP `CONFLICT` (4.09) não mapeado | `case CONFLICT: return 4105` adicionado — já corrigido |
+| CoAP rsc=5000 em todas as ops (4.00 BAD_REQUEST) | Binding incorreto (flat JSON no body); corrigido para opções CoAP 279/283/271/267 + body=pc only — já corrigido (2026-05-31) |
 | `WifiManager.getConnectionInfo()` deprecated | `@SuppressWarnings("deprecation")` em HTTP e CoAP — RC usa API ≤ 29, funciona |
 
 ---
