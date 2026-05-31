@@ -105,6 +105,7 @@ class WebSocketClient(ProtocolClient):
             print("[WS] WARNING: telemetry subscription failed — Android container may not exist yet. Reconnect after Android registers.", flush=True)
         if self._ack_sub_ri is None:
             print("[WS] WARNING: ack subscription failed — Android container may not exist yet.", flush=True)
+        print(f"[WS] tel_sub_ri={self._tel_sub_ri}  ack_sub_ri={self._ack_sub_ri}", flush=True)
 
     def send_command(self, payload: dict) -> tuple[float | None, bool]:
         """Post a command CIN to /cse-in/uxv/commands.
@@ -143,7 +144,21 @@ class WebSocketClient(ProtocolClient):
         self._ack_cb = callback
 
     def disconnect(self) -> None:
-        """Close the WebSocket connection and stop the receive thread."""
+        """Delete CSE subscriptions, then close the WebSocket connection.
+
+        Deleting subscriptions before closing prevents stale delivery on the
+        next connect() and ensures _ensure_subscription() can re-create them
+        cleanly (no 4005 CONFLICT from a leftover sub with the same rn).
+        Must be done before stopping the recv loop so responses can still arrive.
+        """
+        for sub_path in [
+            f"cse-in/uxv/telemetry/{_SUB_TEL_RN}",
+            f"cse-in/uxv/ack/{_SUB_ACK_RN}",
+        ]:
+            try:
+                self._delete_resource(sub_path)
+            except Exception:
+                pass
         self._stop_event.set()
         if self._ws:
             try:
@@ -271,6 +286,7 @@ class WebSocketClient(ProtocolClient):
         # e.g. '/id-in/subBPiTR1sRvs'. Match against the ri captured at connect time.
         is_tel = self._tel_sub_ri is not None and self._tel_sub_ri in sur
         is_ack = self._ack_sub_ri is not None and self._ack_sub_ri in sur
+        print(f"[WS] notify sur={sur!r} is_tel={is_tel} is_ack={is_ack}", flush=True)
 
         try:
             con = json.loads(con_raw) if isinstance(con_raw, str) else con_raw
@@ -400,9 +416,40 @@ class WebSocketClient(ProtocolClient):
             return None
 
         rsc = resp.get("rsc") if resp else None
+        print(f"[WS] subscribe {container_path}/{rn} rsc={rsc}", flush=True)
         if rsc == 2001:
             # Extract the auto-generated ri so we can match it in notification `sur`.
             return resp.get("pc", {}).get("m2m:sub", {}).get("ri")
+        elif rsc == 4005:
+            # DELETE timed out and old sub is still there — GET its ri instead of failing.
+            # The AE poa has already been updated to ws:// so notifications will be delivered
+            # correctly via the active WS connection.
+            return self._get_sub_ri(container_path, rn)
+        return None
+
+    def _get_sub_ri(self, container_path: str, rn: str) -> Optional[str]:
+        """RETRIEVE an existing subscription to get its ri (fallback for 4005 conflict).
+
+        Parameters
+        ----------
+        container_path : str — e.g. 'cse-in/uxv/telemetry'
+        rn : str — subscription resource name
+        """
+        rqi = self._next_rqi()
+        req = {
+            "op": 2,   # RETRIEVE
+            "to": f"{container_path}/{rn}",
+            "fr": _ORIGINATOR,
+            "rqi": rqi,
+            "rvi": "3",
+        }
+        try:
+            resp = self._send_request(req, timeout=3.0)
+            rsc = resp.get("rsc") if resp else None
+            if rsc == 2000:
+                return resp.get("pc", {}).get("m2m:sub", {}).get("ri")
+        except TimeoutError:
+            pass
         return None
 
     def _delete_resource(self, resource_path: str) -> None:

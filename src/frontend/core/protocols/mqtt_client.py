@@ -141,6 +141,20 @@ class MqttClient(ProtocolClient):
         self._ack_cb = callback
 
     def disconnect(self) -> None:
+        """Delete CSE subscriptions, then stop the MQTT client.
+
+        Deleting subscriptions before disconnecting prevents a 4005 CONFLICT
+        on the next connect() when _ensure_subscription() tries to create a
+        subscription with the same rn that's still in the CSE.
+        """
+        for sub_path in [
+            f"cse-in/uxv/telemetry/{_SUB_TEL_RN}",
+            f"cse-in/uxv/ack/{_SUB_ACK_RN}",
+        ]:
+            try:
+                self._delete_resource(sub_path)
+            except Exception:
+                pass
         self._client.loop_stop()
         self._client.disconnect()
 
