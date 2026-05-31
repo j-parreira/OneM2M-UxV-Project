@@ -203,7 +203,9 @@ class MqttClient(ProtocolClient):
         # Verification request — ACK via MQTT response topic.
         if sgn.get("vrq"):
             rqi = msg.get("rqi", "")
-            ack = {"rsc": 2000, "rqi": rqi, "rvi": "3"}
+            sur = sgn.get("sur", "")
+            print(f"[MQTT] vrq sur={sur!r} — ACKing on {_TOPIC_RESP}", flush=True)
+            ack = {"rsc": 2000, "rqi": rqi, "to": _ORIGINATOR, "fr": _ORIGINATOR, "rvi": "3"}
             self._client.publish(_TOPIC_RESP, json.dumps(ack), qos=1)
             return
 
