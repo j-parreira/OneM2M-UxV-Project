@@ -43,8 +43,7 @@ data/processed/*.parquet
 !data/processed/.gitkeep
 
 # Environment / secrets
-.env
-*.env
+# .env is committed intentionally (no credentials — only IPs/ports for lab setup)
 local.properties
 secrets.json
 
