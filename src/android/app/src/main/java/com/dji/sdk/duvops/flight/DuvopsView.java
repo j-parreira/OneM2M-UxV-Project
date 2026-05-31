@@ -14,7 +14,10 @@
  * DuvopsView(context)
  *   → initUI()
  *   → FlightManager + OneM2MSession + NetworkManager
- *   → getSerialNumber() → connectToCse() → OneM2MSession.connect()
+ *   → getSerialNumber()   ← apenas inicializa controllers; NÃO liga ao CSE
+ *
+ * Utilizador selecciona protocolo no spinner e prime "Connect CSE":
+ *   → connectToCse() → OneM2MSession.connect()
  *     → [AE reg → containers → subscription → ack container] → startTelemetry()
  * </pre>
  *
@@ -32,8 +35,6 @@ package com.dji.sdk.duvops.flight;
 import android.app.Service;
 import android.content.Context;
 import android.content.SharedPreferences;
-import android.os.Handler;
-import android.os.Looper;
 import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.View;
@@ -291,7 +292,9 @@ public class DuvopsView extends LinearLayout implements View.OnClickListener {
     // ── Connection ───────────────────────────────────────────────────────────
 
     /**
-     * Obtém o serial number do drone e liga automaticamente ao CSE.
+     * Obtém o serial number do drone e inicializa os controllers.
+     * Não conecta ao CSE automaticamente — o utilizador selecciona o protocolo
+     * e prime "Connect CSE" explicitamente.
      */
     public void getSerialNumber() {
         Aircraft aircraft = (Aircraft) App.getProductInstance();
@@ -308,9 +311,8 @@ public class DuvopsView extends LinearLayout implements View.OnClickListener {
                     if (telemetryManager != null) telemetryManager.setModelName(model);
                     flightManager.initGimbal();
                     Log.d(TAG, "serialNumber: " + s);
-                    // DJI SDK callbacks run on a background thread — post to main thread
-                    // before touching any Views (connectToCse calls setText on connectws)
-                    new Handler(Looper.getMainLooper()).post(DuvopsView.this::connectToCse);
+                    // Serial ready — ligar ao CSE requer acção explícita do utilizador
+                    // (seleccionar protocolo no spinner e premir "Connect CSE")
                 }
                 @Override
                 public void onFailure(DJIError djiError) {
