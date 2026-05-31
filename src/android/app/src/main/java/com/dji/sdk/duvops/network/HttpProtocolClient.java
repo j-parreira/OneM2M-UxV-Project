@@ -176,6 +176,7 @@ public class HttpProtocolClient implements ProtocolClient {
             String fr  = req.optString("fr",  "");
             String rqi = req.optString("rqi", "");
             String rvi = req.optString("rvi", "3");
+            int    op  = req.optInt("op", 1);
             int    ty  = req.optInt("ty", 0);
             JSONObject pc = req.optJSONObject("pc");
             String bodyStr = (pc != null) ? pc.toString() : "{}";
@@ -183,24 +184,35 @@ public class HttpProtocolClient implements ProtocolClient {
             // Construir URL: http://host:port/{to}
             String url = "http://" + savedHost + ":" + savedPort + "/" + to;
 
-            // Content-Type com ty embebido (ex: application/json;ty=4)
-            String contentType = (ty > 0)
-                    ? "application/json;ty=" + ty
-                    : "application/json";
-
-            RequestBody body = RequestBody.create(
-                    MediaType.parse(contentType),
-                    bodyStr.getBytes()
-            );
-
-            Request httpReq = new Request.Builder()
-                    .url(url)
-                    .post(body)
-                    .addHeader("X-M2M-Origin", fr)
-                    .addHeader("X-M2M-RI",     rqi)
-                    .addHeader("X-M2M-RVI",    rvi)
-                    .addHeader("Accept",        "application/json")
-                    .build();
+            Request httpReq;
+            if (op == 4) {
+                // DELETE — sem body nem Content-Type (oneM2M TS-0010 HTTP binding)
+                httpReq = new Request.Builder()
+                        .url(url)
+                        .delete()
+                        .addHeader("X-M2M-Origin", fr)
+                        .addHeader("X-M2M-RI",     rqi)
+                        .addHeader("X-M2M-RVI",    rvi)
+                        .addHeader("Accept",        "application/json")
+                        .build();
+            } else {
+                // CREATE/UPDATE/RETRIEVE — POST com body e Content-Type:ty
+                String contentType = (ty > 0)
+                        ? "application/json;ty=" + ty
+                        : "application/json";
+                RequestBody body = RequestBody.create(
+                        MediaType.parse(contentType),
+                        bodyStr.getBytes()
+                );
+                httpReq = new Request.Builder()
+                        .url(url)
+                        .post(body)
+                        .addHeader("X-M2M-Origin", fr)
+                        .addHeader("X-M2M-RI",     rqi)
+                        .addHeader("X-M2M-RVI",    rvi)
+                        .addHeader("Accept",        "application/json")
+                        .build();
+            }
 
             // Execução assíncrona — não bloqueia o timer de telemetria
             final String rqiFinal = rqi;

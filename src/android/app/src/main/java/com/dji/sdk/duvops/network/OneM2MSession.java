@@ -122,6 +122,10 @@ public class OneM2MSession implements ProtocolClient, DroneCommandListener {
      * Treat the same as 4105: skip AE creation and proceed to resource setup.
      */
     private static final int RSC_ORIGINATOR_ALREADY_REGISTERED = 4117;
+    /** DELETE success — AE foi apagado. */
+    private static final int RSC_DELETED   = 2002;
+    /** Recurso não existe — esperado no DELETE antes do primeiro CREATE. */
+    private static final int RSC_NOT_FOUND = 4004;
 
     // ── Tempo de timeout por request (segundos) ───────────────────────────────
     private static final int REQUEST_TIMEOUT_S    = 10;
@@ -230,6 +234,12 @@ public class OneM2MSession implements ProtocolClient, DroneCommandListener {
     private final ConcurrentHashMap<String, Runnable> pending = new ConcurrentHashMap<>();
 
     /**
+     * Callbacks de DELETE pendentes — separados de {@link #pending} porque as respostas
+     * de DELETE usam códigos diferentes (2002=deleted, 4004=not found, ambos são sucesso).
+     */
+    private final ConcurrentHashMap<String, Runnable> deletePending = new ConcurrentHashMap<>();
+
+    /**
      * Futuros de timeout por request. Cancelados quando a resposta chega.
      */
     private final ConcurrentHashMap<String, ScheduledFuture<?>> timeouts = new ConcurrentHashMap<>();
@@ -311,6 +321,7 @@ public class OneM2MSession implements ProtocolClient, DroneCommandListener {
         savedAeId = aeId;
         ready = false;
         pending.clear();
+        deletePending.clear();
         cancelAllTimeouts();
 
         // Originator deve começar com "C" (oneM2M spec)
@@ -333,6 +344,7 @@ public class OneM2MSession implements ProtocolClient, DroneCommandListener {
         cancelReconnectFuture();
         ready = false;
         pending.clear();
+        deletePending.clear();
         cancelAllTimeouts();
         transport.disconnect();
         notifyStatus("Disconnected.");
@@ -494,6 +506,15 @@ public class OneM2MSession implements ProtocolClient, DroneCommandListener {
         ScheduledFuture<?> timeoutFuture = timeouts.remove(rqi);
         if (timeoutFuture != null) timeoutFuture.cancel(false);
 
+        // DELETE callbacks: qualquer rsc é aceitável (2002=deleted, 4004=not found, ambos OK).
+        // Em caso de erro inesperado, prossegue na mesma — melhor tentar CREATE do que bloquear.
+        Runnable deleteCallback = deletePending.remove(rqi);
+        if (deleteCallback != null) {
+            Log.d(TAG, "DELETE AE rsc=" + rsc + " — creating AE");
+            deleteCallback.run();
+            return;
+        }
+
         Runnable callback = pending.remove(rqi);
         boolean ok = (rsc == RSC_CREATED || rsc == RSC_OK
                 || rsc == RSC_CONFLICT || rsc == RSC_ORIGINATOR_ALREADY_REGISTERED);
@@ -653,26 +674,56 @@ public class OneM2MSession implements ProtocolClient, DroneCommandListener {
     // ── Sequência de registo OneM2M ──────────────────────────────────────────
 
     /**
-     * Passo 1: registo do AE no CSE.
+     * Passo 1: registo do AE no CSE — apaga primeiro se já existir.
      *
-     * <p>Usa {@code to = CSE_ID} ("id-in", CSE-relative sem leading slash) — o ACME CSE
-     * v2025.11 rejeita {@code "/id-in"} (too short) e {@code "/id-in/cse-in"} cria o AE
-     * numa localização inesperada. Apenas {@code "id-in"} cria o AE correctamente em
-     * {@code /cse-in/uxv} (acessível via {@code CSE_BASE + "/" + AE_NAME}).
+     * <p>Sem o DELETE inicial, mudar de protocolo (ex: WS → MQTT) deixa no CSE uma
+     * associação de transporte antiga: o CSE tenta entregar notificações pelo transporte
+     * morto e descarta-as silenciosamente. DELETE + re-CREATE garante que o AE fica
+     * registado com a associação correcta para o protocolo activo.
      *
-     * <p>O campo {@code aei} NÃO é incluído no body — é um atributo não-provision em
-     * v2025.11 (non-provision attribute). O CSE atribui {@code aei = originator}
-     * automaticamente a partir do campo {@code fr} do request.
-     *
-     * <p>Conflito (4105) = AE já existe → tratar como sucesso e continuar.
+     * <p>Em primeira ligação (AE não existe), o DELETE devolve 4004 — ignorado.
+     * Em reconexão ou mudança de protocolo, devolve 2002 — estado limpo.
      */
     private void registerAE() {
         notifyStatus("Registering AE (" + aeOriginator + ")...");
+        String rqi = "rqi-" + rqiCounter.incrementAndGet();
         try {
-            // poa (Point of Access) = transport-specific callback URL.
-            // REQUIRED for notification delivery: without poa the CSE discards all
-            // subscription notifications silently (no poa → no delivery route).
-            // Each transport implements getPoaUrl() to return the correct scheme/address.
+            JSONObject delReq = new JSONObject()
+                    .put("op",  4)   // DELETE
+                    .put("to",  CSE_BASE + "/" + AE_NAME)
+                    .put("fr",  aeOriginator)
+                    .put("rqi", rqi)
+                    .put("rvi", "3");
+            deletePending.put(rqi, this::doCreateAE);
+            if (!scheduler.isShutdown()) {
+                final String rqiFinal = rqi;
+                ScheduledFuture<?> tf = scheduler.schedule(() -> {
+                    boolean wasPending = deletePending.remove(rqiFinal) != null;
+                    timeouts.remove(rqiFinal);
+                    if (wasPending) {
+                        Log.w(TAG, "DELETE AE timeout — proceeding to CREATE anyway");
+                        doCreateAE();
+                    }
+                }, REQUEST_TIMEOUT_S, TimeUnit.SECONDS);
+                timeouts.put(rqi, tf);
+            }
+            transport.sendTelemetry(delReq.toString());
+        } catch (JSONException e) {
+            Log.w(TAG, "registerAE DELETE build error: " + e.getMessage());
+            doCreateAE();
+        }
+    }
+
+    /**
+     * Passo 1b: cria o AE após o DELETE ter sido confirmado (ou após timeout do DELETE).
+     *
+     * <p>Usa {@code to = CSE_ID} ("id-in") — ver nota em {@link #registerAE}.
+     * Campo {@code aei} NÃO incluído (non-provision attribute em v2025.11).
+     */
+    private void doCreateAE() {
+        try {
+            // poa = endereço de entrega de notificações para este transport.
+            // OBRIGATÓRIO — sem poa o CSE descarta notificações silenciosamente.
             String poa = transport.getPoaUrl();
             JSONObject pc = new JSONObject()
                     .put("m2m:ae", new JSONObject()
@@ -682,9 +733,8 @@ public class OneM2MSession implements ProtocolClient, DroneCommandListener {
                             .put("srv", new JSONArray().put("3"))
                             .put("rr",  true)
                             .put("poa", new JSONArray().put(poa)));
-            // to = CSE_ID ("id-in") — CSE-relative identifier of the CSE-Base
             sendRequest(OP_CREATE, CSE_ID, TY_AE, pc, this::createTelemetryContainer);
-        } catch (JSONException e) { Log.e(TAG, "registerAE: " + e.getMessage()); }
+        } catch (JSONException e) { Log.e(TAG, "doCreateAE: " + e.getMessage()); }
     }
 
     /** Passo 2: criação do container {@code cse-in/uxv/telemetry} (mni=10). */
@@ -806,6 +856,7 @@ public class OneM2MSession implements ProtocolClient, DroneCommandListener {
         if (reconnectPending) return;
         reconnectPending = true;
         pending.clear();
+        deletePending.clear();
         cancelAllTimeouts();
         int delay = reconnectDelayS;
         reconnectDelayS = Math.min(reconnectDelayS * 2, MAX_RECONNECT_DELAY_S);
@@ -822,6 +873,7 @@ public class OneM2MSession implements ProtocolClient, DroneCommandListener {
             if (!shouldReconnect || transport == null || ready) return;
             notifyStatus("Reconnecting...");
             pending.clear();
+            deletePending.clear();
             // Pass aeOriginator (not savedAeId) — CSE expects "C"+serial, not raw serial
             transport.connect(savedHost, savedPort, aeOriginator);
         }, delay, TimeUnit.SECONDS);

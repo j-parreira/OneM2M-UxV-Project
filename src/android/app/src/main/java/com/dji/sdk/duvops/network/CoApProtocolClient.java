@@ -192,8 +192,10 @@ public class CoApProtocolClient implements ProtocolClient {
             coapClient.setTimeout(REQUEST_TIMEOUT_MS);
 
             final String rqiFinal = rqi;
-            // POST assíncrono CON (Confirmable) com o flat JSON completo como body
-            coapClient.post(new CoapHandler() {
+            int op = req.optInt("op", 1);
+
+            // Handler partilhado por POST e DELETE — resposta processada da mesma forma
+            CoapHandler handler = new CoapHandler() {
                 @Override
                 public void onLoad(CoapResponse response) {
                     try {
@@ -242,7 +244,15 @@ public class CoApProtocolClient implements ProtocolClient {
                     Log.e(TAG, "CoAP request failed rqi=" + rqiFinal);
                     // Sem resposta → timeout de OneM2MSession vai disparar
                 }
-            }, jsonPayload, CONTENT_FORMAT_JSON);
+            };
+
+            if (op == 4) {
+                // DELETE CoAP — sem payload (oneM2M TS-0010 CoAP binding)
+                coapClient.delete(handler);
+            } else {
+                // POST assíncrono CON (Confirmable) com o flat JSON completo como body
+                coapClient.post(handler, jsonPayload, CONTENT_FORMAT_JSON);
+            }
 
         } catch (JSONException e) {
             Log.e(TAG, "sendTelemetry parse: " + e.getMessage());
