@@ -61,8 +61,9 @@ Copiar `.env.example` para `.env` e preencher com os IPs reais da LAN.
 | `DATA_RAW_DIR` | `../../data/raw` | Relativo a `src/frontend/` |
 | `CALLBACK_HOST` | `127.0.0.1` | **IP LAN desta máquina** (não 127.0.0.1 em LAN real — Docker não alcança loopback). Usado apenas para bind local. |
 | `CALLBACK_HTTP_PORT` | `8090` | Servidor HTTP embutido para notificações (HTTP e CoAP transport) |
-| `CALLBACK_COAP_PORT` | `5685` | Porta CoAP (reservada; não usada como nu — Docker Desktop bloqueia UDP de containers) |
-| `DOCKER_CALLBACK_HOST` | `host.docker.internal` | Hostname desta máquina **visto de dentro do container**. Docker Desktop roteia TCP via este hostname (192.168.65.254). Usado nas URLs `nu` de subscriptions HTTP e CoAP. **Não alterar** sem perceber o networking Docker Desktop. |
+| `CALLBACK_COAP_PORT` | `5684` | Porta CoAP (reservada; não usada como `nu` — Docker Desktop bloqueia UDP de containers) |
+| `DOCKER_CALLBACK_HOST` | `host.docker.internal` | Hostname desta máquina **visto de dentro do container**. Docker Desktop roteia TCP via este hostname. Usado nas URLs `nu` de subscriptions HTTP e CoAP. **Não alterar** sem perceber o networking Docker Desktop. |
+| `MQTT_BROKER_POA_HOST` | `mosquitto` | Hostname do broker MQTT **visto de dentro do container CSE** (nome do serviço Docker Compose). Usado no campo `poa` do AE do Streamlit. |
 
 ---
 

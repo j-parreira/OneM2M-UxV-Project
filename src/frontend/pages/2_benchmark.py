@@ -75,10 +75,19 @@ with col2:
         rate_msg_s = st.selectbox("Telemetry rate", [1, 5, 10], format_func=lambda r: f"{r} msg/s")
         duration_s = st.number_input("Duration (s)", min_value=10, max_value=600, value=300, step=10)
         n_commands = (rate_msg_s or 1) * duration_s
+        ack_run_timeout_s = None  # unused in S1
     else:
         rate_msg_s = None
         n_commands = st.number_input("Commands to send", min_value=1, max_value=200, value=50)
-        duration_s = n_commands * 10  # upper bound, not used directly
+        ack_run_timeout_s = st.number_input(
+            "Run timeout (s)",
+            min_value=10,
+            max_value=600,
+            value=60,
+            step=10,
+            help="Wall-clock cap for the whole burst. Prevents a full 10 s/ACK wait × n_commands worst case.",
+        )
+        duration_s = int(ack_run_timeout_s)  # used only for the sidecar; not a hard deadline in S2
 
 with col3:
     notes = st.text_area("Operator notes", placeholder="Battery %, network conditions, …", height=100)
@@ -122,6 +131,7 @@ with run_col:
             rate_msg_s=rate_msg_s,
             n_commands=int(n_commands),
             duration_s=int(duration_s),
+            ack_run_timeout_s=int(ack_run_timeout_s) if ack_run_timeout_s is not None else 60,
             notes=notes,
         )
         st.session_state.bench_stop_event = threading.Event()

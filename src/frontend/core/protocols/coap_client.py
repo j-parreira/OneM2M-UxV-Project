@@ -58,6 +58,32 @@ _OPT_RQI = 283   # oneM2M-RQI (bytes — request identifier)
 _OPT_RSC = 307   # oneM2M-RSC (bytes → int — response status, read-only)
 
 
+def _measure_notification_headers(handler: BaseHTTPRequestHandler) -> int:
+    """Estimate incoming HTTP notification POST header bytes.
+
+    Used to measure the actual overhead of notification delivery in S1
+    (HTTP/TCP workaround — see module docstring). Reconstructs the raw
+    HTTP request line + headers as they appear on the wire.
+
+    Parameters
+    ----------
+    handler:
+        BaseHTTPRequestHandler instance for the incoming POST.
+
+    Returns
+    -------
+    int
+        Estimated header bytes (request line + header fields + CRLF terminators).
+    """
+    try:
+        lines = [f"POST {handler.path} HTTP/1.1"]
+        for k, v in handler.headers.items():
+            lines.append(f"{k}: {v}")
+        return sum(len((line + "\r\n").encode()) for line in lines) + 2
+    except Exception:
+        return 0
+
+
 class CoapClient(ProtocolClient):
     """CoAP OneM2M client with HTTP callback server for notifications.
 
@@ -92,6 +118,11 @@ class CoapClient(ProtocolClient):
         # HTTP callback server — receives CSE notifications via TCP.
         self._callback_server: Optional[HTTPServer] = None
         self._callback_thread: Optional[threading.Thread] = None
+
+        # S1 notification header size (incoming HTTP POSTs from CSE).
+        # Captured once on first notification; ACME CSE notification headers are
+        # structurally constant between messages, so one sample is representative.
+        self._notif_headers_bytes: int = 0
 
     # ------------------------------------------------------------------
     # ProtocolClient interface
@@ -208,24 +239,35 @@ class CoapClient(ProtocolClient):
         self._ack_sub_ri = None
 
     def get_header_bytes(self, payload_size: int) -> int:
-        """Estimate CoAP header overhead for a request of given payload size.
+        """Return header overhead in bytes for the current scenario.
 
-        Fixed header: 4 bytes (version, type, TKL, code, message ID).
-        Token: 8 bytes (typical for random tokens).
-        Uri-Host option: 2 + len(host) bytes.
-        Uri-Port, Uri-Path, Content-Format options: approximately 10 bytes.
-        Payload marker: 1 byte (0xFF).
+        S2 (send_command path, outgoing CoAP CON POST):
+            Static CoAP header estimate per RFC 7252 —
+            4-byte fixed header + 8-byte token + Uri-Host option (2+len(host))
+            + Uri-Port/Uri-Path/Content-Format options (~10 bytes) + payload marker (1 byte).
+            This is the correct overhead for the command CIN create request.
+
+        S1 (telemetry notification path):
+            Notifications arrive via HTTP/TCP (Docker Desktop blocks CoAP/UDP from
+            containers — see module docstring). Returns the measured incoming HTTP
+            notification header size captured on the first delivery, or falls back
+            to the CoAP static estimate if no notification has arrived yet.
 
         Parameters
         ----------
         payload_size:
-            Size of the request payload in bytes (unused in this estimate).
+            Size of the CIN payload in bytes (unused in static estimate path).
 
         Returns
         -------
         int
-            Estimated header overhead in bytes.
+            Header overhead in bytes.
         """
+        # If notification headers have been captured (S1 path), return those —
+        # they represent the actual protocol overhead for telemetry delivery.
+        if self._notif_headers_bytes > 0:
+            return self._notif_headers_bytes
+        # Fallback: static CoAP outgoing request estimate (S2 path / pre-first-notification).
         host_len = len(self._config.cse_host)
         return 4 + 8 + (2 + host_len) + 10 + 1
 
@@ -445,6 +487,13 @@ class CoapClient(ProtocolClient):
                 body_bytes = self.rfile.read(length)
                 self.send_response(200)
                 self.end_headers()
+
+                # Capture notification header size once on first delivery.
+                # These represent the actual overhead for notifications in S1
+                # (HTTP/TCP used because Docker Desktop blocks CoAP/UDP).
+                if client._notif_headers_bytes == 0:
+                    client._notif_headers_bytes = _measure_notification_headers(self)
+
                 try:
                     body = json.loads(body_bytes.decode())
                 except (json.JSONDecodeError, UnicodeDecodeError):

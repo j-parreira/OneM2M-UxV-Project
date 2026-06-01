@@ -54,9 +54,14 @@ class HttpClient(ProtocolClient):
         self._callback_server: Optional[HTTPServer] = None
         self._callback_thread: Optional[threading.Thread] = None
 
-        # Last raw response for header-size measurement.
+        # Header-size tracking for get_header_bytes().
+        # S2 (send_command): sum of request + response headers, updated each call.
         self._last_request_headers_bytes = 0
         self._last_response_headers_bytes = 0
+        # S1 (telemetry notifications): incoming HTTP POST header size.
+        # Captured once on first notification (ACME CSE notification headers are
+        # structurally constant between messages), then reused for all records.
+        self._notif_headers_bytes: int = 0
 
         # ri of each subscription — ACME CSE puts the ri (e.g. /id-in/subXXX),
         # not the human-readable path, in the `sur` field of notifications.
@@ -145,12 +150,32 @@ class HttpClient(ProtocolClient):
         self._session.close()
 
     def get_header_bytes(self, payload_size: int) -> int:
-        """Return the sum of request + response header bytes for the last send_command call.
+        """Return HTTP header overhead in bytes.
 
-        HTTP header overhead includes the request headers sent and the
-        response headers received (both are protocol overhead for the exchange).
+        S2 (send_command path): sum of outgoing request headers + incoming
+        response headers, updated after every send_command call.
+
+        S1 (notification path): incoming notification POST headers, captured
+        once on first delivery and reused thereafter. Returns 0 until the
+        first notification arrives.
+
+        Both are correct per-message overheads for their respective directions.
+
+        Parameters
+        ----------
+        payload_size:
+            Unused. Kept for interface compatibility.
+
+        Returns
+        -------
+        int
+            Header overhead in bytes for the most recent exchange.
         """
-        return self._last_request_headers_bytes + self._last_response_headers_bytes
+        # Prefer outgoing command headers if available (S2), else notification headers (S1).
+        cmd_headers = self._last_request_headers_bytes + self._last_response_headers_bytes
+        if cmd_headers > 0:
+            return cmd_headers
+        return self._notif_headers_bytes
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -225,6 +250,13 @@ class HttpClient(ProtocolClient):
                 body_bytes = self.rfile.read(length)
                 self.send_response(200)
                 self.end_headers()
+
+                # Capture incoming notification header size once (first delivery).
+                # ACME CSE notification headers are structurally identical between
+                # messages, so a single measurement is representative.
+                if client._notif_headers_bytes == 0:
+                    client._notif_headers_bytes = client._measure_notification_headers(self)
+
                 try:
                     body = json.loads(body_bytes.decode())
                 except (json.JSONDecodeError, UnicodeDecodeError):
@@ -285,6 +317,32 @@ class HttpClient(ProtocolClient):
                 self._ack_cb(con)
             except Exception as exc:
                 print(f"[HTTP] ack_cb raised: {exc!r}", flush=True)
+
+    @staticmethod
+    def _measure_notification_headers(handler: BaseHTTPRequestHandler) -> int:
+        """Estimate incoming HTTP notification POST header bytes.
+
+        Reconstructs the raw HTTP request line + headers from the BaseHTTPRequestHandler
+        so the header overhead reflects the actual notification delivery (S1 path),
+        not the outgoing command request (S2 path).
+
+        Parameters
+        ----------
+        handler:
+            The BaseHTTPRequestHandler instance for the incoming POST.
+
+        Returns
+        -------
+        int
+            Estimated header bytes (request line + all header fields + CRLF terminators).
+        """
+        try:
+            lines = [f"POST {handler.path} HTTP/1.1"]
+            for k, v in handler.headers.items():
+                lines.append(f"{k}: {v}")
+            return sum(len((line + "\r\n").encode()) for line in lines) + 2
+        except Exception:
+            return 0
 
     @staticmethod
     def _measure_request_headers(prepared_request) -> int:

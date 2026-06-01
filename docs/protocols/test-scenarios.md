@@ -19,7 +19,7 @@ Drone hovers at a fixed position. The Android app pushes telemetry at a fixed ra
 {"command": "setTelemetryRate", "intervalMs": 200}
 ```
 
-**Rates tested:** 1 msg/s (1000 ms), 4 msg/s (250 ms), 10 msg/s (100 ms)
+**Rates tested:** 1 msg/s (1000 ms), 5 msg/s (200 ms), 10 msg/s (100 ms)
 
 **Metrics:** `latency_ms` (NTP-dependent), `payload_bytes`, `header_bytes`, `seq` gaps (packet loss)  
 **Duration:** 5 minutes per rate per protocol  
@@ -195,7 +195,7 @@ Library:        aiocoap 0.4.8 (Python) / Californium 2.7.4 (Android)
   "run_id": "websocket_s1_20260601_run001",
   "protocol": "websocket",
   "scenario": 1,
-  "rate_msg_s": 4,
+  "rate_msg_s": 5,
   "duration_s": 300,
   "cse_version": "2025.11",
   "android_app_version": "4.0",

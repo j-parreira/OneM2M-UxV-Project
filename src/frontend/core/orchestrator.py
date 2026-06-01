@@ -40,6 +40,10 @@ class RunConfig:
     rate_msg_s: Optional[int]   # Scenario 1 only: 1, 5, or 10 msg/s
     n_commands: int         # Scenario 2: 50; Scenario 1: rate × duration_s
     duration_s: int         # Scenario 1 & 3: 300 s; Scenario 2: from n_commands
+    # Scenario 2: wall-clock cap for the entire burst (prevents 50×10=500 s worst case).
+    # A run is marked done (and remaining commands dropped) when this elapses,
+    # regardless of how many ACKs have been received.
+    ack_run_timeout_s: int = 60
     run_id: str = ""        # auto-generated if empty
     notes: str = ""         # operator notes for the JSON sidecar
 
@@ -264,8 +268,20 @@ def _run_scenario_2(
     try:
         client.connect()
 
+        # Wall-clock deadline for the full burst, regardless of per-command ACK timeouts.
+        # Without this, n_commands=50 with 10 s/ACK timeout can take up to 500 s if all ACKs
+        # time out. Default 60 s is enough for ≥50 rapid-fire commands in normal conditions.
+        run_deadline = time.monotonic() + run_cfg.ack_run_timeout_s
+
         for seq_cmd in range(1, run_cfg.n_commands + 1):
             if stop_event.is_set():
+                break
+            if time.monotonic() >= run_deadline:
+                print(
+                    f"[S2] run timeout ({run_cfg.ack_run_timeout_s}s) reached after "
+                    f"{seq_cmd - 1}/{run_cfg.n_commands} commands — aborting burst",
+                    flush=True,
+                )
                 break
 
             command = _COMMANDS[(seq_cmd - 1) % len(_COMMANDS)]
@@ -308,8 +324,10 @@ def _run_scenario_2(
             # CIN creation succeeded: record the Streamlit→CSE round-trip separately.
             cin_create_ms: Optional[float] = send_latency_ms
 
-            # Wait for ACK from Android (delivered via subscription).
-            ack_timeout_s = 10.0
+            # Per-command ACK timeout, clamped to the remaining run budget so the
+            # overall ack_run_timeout_s is always respected.
+            remaining_s = max(0.0, run_deadline - time.monotonic())
+            ack_timeout_s = min(10.0, remaining_s)
             try:
                 ack_con = ack_queue.get(timeout=ack_timeout_s)
             except queue.Empty:

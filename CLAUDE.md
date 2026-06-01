@@ -18,7 +18,7 @@ See `docs/ai-context/project-context.md` for full system context before starting
 
 | Directory        | Stack              | Entry Point                                      | Status |
 |-----------------|--------------------|-------------------------------------------------|--------|
-| `src/android/`  | Java, DJI SDK v4   | Android Studio project                          | ⚠️ WebSocket complete; MQTT/HTTP/CoAP pending |
+| `src/android/`  | Java, DJI SDK v4   | Android Studio project                          | ⚠️ All 4 implemented; WebSocket end-to-end verified; MQTT/HTTP/CoAP pending full e2e test |
 | `src/frontend/` | Python, Streamlit  | `python -m streamlit run app.py`                | ✅ All 4 protocols complete |
 | `src/cse/`      | Docker, ACME CSE   | `docker compose up`                             | ✅ Complete |
 | `src/analysis/` | Python             | Scripts in `scripts/`, notebooks in `notebooks/` | 🔜 Not started |

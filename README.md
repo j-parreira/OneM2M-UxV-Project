@@ -142,14 +142,12 @@ Open `src/android/` in Android Studio. Requires DJI SDK v4 and a valid DJI devel
 
 | Component | Status | Notes |
 |---|---|---|
-| `src/android/` | ✅ Complete | All 4 transports; end-to-end tested against ACME CSE v2025.11 (2026-05-31) |
+| `src/android/` | ⚠️ Implemented | All 4 protocol clients implemented; WebSocket end-to-end verified; MQTT/HTTP/CoAP pending full end-to-end test against ACME CSE |
 | `src/cse/` | ✅ Complete | All 4 protocols; WS keepalive + CoAP NOTIFY patches applied |
 | `src/frontend/` | ✅ Complete | All 4 protocol clients; S1 & S2 orchestrators; CSV logger; results viewer |
 | `src/analysis/` | 🔜 Not started | Pending benchmark data collection |
 
 **Next step:** benchmark runs — Scenarios 1 & 2, ≥30 runs × 4 protocols.  
-**Deadline:** 2026-06-06 (MDPI paper submission)
-
 **Deadline:** 2026-06-06 (relatório académico, Mobilidade em Sistemas Computacionais)
 
 ## Key Technical Documents
