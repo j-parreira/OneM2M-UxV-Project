@@ -107,8 +107,16 @@ def check_android_ae(cfg) -> tuple[bool, str]:
             },
             timeout=3.0,
         )
-        if resp.status_code == 200 and ('"ty":2' in resp.text or '"ty": 2' in resp.text):
-            return True, "AE `/cse-in/uxv` registered"
+        if resp.status_code == 200:
+            try:
+                body = resp.json()
+                # ACME CSE wraps resources; ty may be at top level or inside m2m:ae.
+                ty = body.get("ty") or body.get("m2m:ae", {}).get("ty")
+                if ty == 2:
+                    return True, "AE `/cse-in/uxv` registered"
+            except ValueError:
+                pass
+            return False, f"HTTP 200 but unexpected body"
         if resp.status_code == 404:
             return False, "AE not found — launch Android app"
         return False, f"HTTP {resp.status_code}"
@@ -119,21 +127,25 @@ def check_android_ae(cfg) -> tuple[bool, str]:
 
 
 def count_runs(data_raw_dir: Path) -> dict:
-    """Count completed runs per (protocol, scenario) from CSV filenames.
+    """Count completed runs per (protocol, scenario[, rate]) from CSV filenames.
 
-    Only files matching the canonical naming convention are counted:
-    <protocol>_s<N>_<YYYYMMDD>_run<NNN>.csv
+    Handles both old format (<protocol>_s<N>_<YYYYMMDD>_run<NNN>.csv) and new
+    S1-with-rate format (<protocol>_s1_r<rate>_<YYYYMMDD>_run<NNN>.csv).
 
     Returns:
-        dict mapping (protocol, scenario_int) → count
+        dict mapping (protocol, scenario_int, rate_or_None) → count
     """
-    counts: dict[tuple[str, int], int] = defaultdict(int)
-    pattern = re.compile(r"^(websocket|mqtt|http|coap)_s([12])_\d{8}_run\d+\.csv$")
+    counts: dict[tuple[str, int, int | None], int] = defaultdict(int)
+    # Group 3 (rate) is optional — present for S1 runs only.
+    pattern = re.compile(
+        r"^(websocket|mqtt|http|coap)_s([12])(?:_r(\d+))?_\d{8}_run\d+\.csv$"
+    )
     if data_raw_dir.exists():
         for f in data_raw_dir.glob("*.csv"):
             m = pattern.match(f.name)
             if m:
-                counts[(m.group(1), int(m.group(2)))] += 1
+                rate = int(m.group(3)) if m.group(3) else None
+                counts[(m.group(1), int(m.group(2)), rate)] += 1
     return counts
 
 
@@ -144,9 +156,11 @@ ae_ok, ae_msg = check_android_ae(cfg)
 counts = count_runs(cfg.data_raw_dir)
 
 PROTOCOLS = ["websocket", "mqtt", "http", "coap"]
+S1_RATES = [1, 5, 10]
 TARGET = 30
 total_runs = sum(counts.values())
-needed = len(PROTOCOLS) * 2 * TARGET
+# S1: 3 rates × 4 protocols × 30; S2: 4 protocols × 30.
+needed = len(PROTOCOLS) * (len(S1_RATES) + 1) * TARGET
 
 with col_cse:
     if cse_ok:
@@ -175,18 +189,24 @@ with col_data:
 
 st.divider()
 st.subheader("Data Collection Progress")
-st.caption(f"Target: {TARGET} runs per (protocol × scenario). Counts valid CSV files in `{cfg.data_raw_dir}`.")
+st.caption(
+    f"Target: {TARGET} runs per (protocol × scenario × rate). "
+    f"S1 has 3 rates (1/5/10 msg/s); S2 is rate-independent. "
+    f"Counts valid CSV files in `{cfg.data_raw_dir}`."
+)
 
 for proto in PROTOCOLS:
-    col_proto, col_s1, col_s2 = st.columns([1, 3, 3])
-    s1_n = counts.get((proto, 1), 0)
-    s2_n = counts.get((proto, 2), 0)
-    with col_proto:
+    # S1 — one progress bar per rate
+    rate_cols = st.columns([1] + [3] * len(S1_RATES) + [3])
+    with rate_cols[0]:
         st.markdown(f"**{proto.upper()}**")
-    with col_s1:
-        st.progress(min(1.0, s1_n / TARGET), text=f"S1 Telemetry: {s1_n}/{TARGET}")
-    with col_s2:
-        st.progress(min(1.0, s2_n / TARGET), text=f"S2 Commands: {s2_n}/{TARGET}")
+    for i, rate in enumerate(S1_RATES):
+        n = counts.get((proto, 1, rate), 0)
+        with rate_cols[i + 1]:
+            st.progress(min(1.0, n / TARGET), text=f"S1 r{rate}: {n}/{TARGET}")
+    s2_n = counts.get((proto, 2, None), 0)
+    with rate_cols[-1]:
+        st.progress(min(1.0, s2_n / TARGET), text=f"S2: {s2_n}/{TARGET}")
 
 if st.button("↻ Refresh"):
     st.rerun()

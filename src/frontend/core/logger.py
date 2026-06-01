@@ -5,8 +5,12 @@ software versions, RunConfig params, and operator notes.
 
 Both files are required for paper reproducibility (see benchmark-flow.md §8).
 
-CSV filename format: <protocol>_s<scenario>_<YYYYMMDD>_run<N>.csv
-JSON sidecar:        <same_stem>.json
+CSV filename format:
+  Scenario 1: <protocol>_s1_r<rate>_<YYYYMMDD>_run<NNN>.csv
+              (rate = msg/s integer, e.g. r5 for 5 msg/s)
+  Scenario 2: <protocol>_s2_<YYYYMMDD>_run<NNN>.csv
+
+JSON sidecar: <same_stem>.json
 """
 import csv
 import json
@@ -15,6 +19,13 @@ import time
 from dataclasses import dataclass, asdict
 from pathlib import Path
 from typing import Optional
+
+# ── Reproducibility constants ────────────────────────────────────────────────
+# These are fixed for the entirety of the experiment campaign. Change only if
+# the actual hardware/software changes mid-campaign.
+CSE_VERSION = "2025.11"                         # ACME CSE version (Dockerfile: acmecse==2025.11)
+ANDROID_APP_VERSION = "4.0"                     # App version (DJI SDK v4, src/android/)
+DRONE_MODEL = "DJI Mavic 2 Enterprise Advanced" # Hardware under test
 
 
 @dataclass
@@ -53,40 +64,36 @@ _CSV_COLUMNS = [
 ]
 
 
-def generate_run_id(protocol: str, scenario: int) -> str:
-    """Generate a run_id from current date and existing files in data_raw_dir.
-
-    Parameters
-    ----------
-    protocol : str
-    scenario : int
-
-    Returns
-    -------
-    str, e.g. 'websocket_s1_20260520_run001'
-    """
-    date_str = time.strftime("%Y%m%d")
-    return f"{protocol}_s{scenario}_{date_str}_run{{n}}"
-
-
-def next_run_id(protocol: str, scenario: int, data_raw_dir: Path) -> str:
-    """Return the next unused run ID for a given (protocol, scenario) pair.
+def next_run_id(
+    protocol: str,
+    scenario: int,
+    data_raw_dir: Path,
+    rate_msg_s: Optional[int] = None,
+) -> str:
+    """Return the next unused run ID for a given (protocol, scenario[, rate]) tuple.
 
     Counts existing CSV files in data_raw_dir matching the pattern and
-    increments the run counter.
+    increments the run counter. For Scenario 1, the rate is encoded in the
+    filename (e.g. ``_r5_``) so runs at different rates are counted
+    independently and are unambiguous without opening the JSON sidecar.
 
     Parameters
     ----------
     protocol : str
     scenario : int
     data_raw_dir : Path
+    rate_msg_s : int or None
+        Required for Scenario 1 (1, 5, or 10 msg/s). Ignored for Scenario 2.
 
     Returns
     -------
-    str, e.g. 'websocket_s1_20260520_run003'
+    str, e.g. 'websocket_s1_r5_20260601_run003' or 'http_s2_20260601_run001'
     """
     date_str = time.strftime("%Y%m%d")
-    stem_prefix = f"{protocol}_s{scenario}_{date_str}_run"
+    if scenario == 1 and rate_msg_s is not None:
+        stem_prefix = f"{protocol}_s{scenario}_r{rate_msg_s}_{date_str}_run"
+    else:
+        stem_prefix = f"{protocol}_s{scenario}_{date_str}_run"
     existing = sorted(data_raw_dir.glob(f"{stem_prefix}*.csv")) if data_raw_dir.exists() else []
     n = len(existing) + 1
     return f"{stem_prefix}{n:03d}"
@@ -100,8 +107,13 @@ def save_run(
     run_config_dict: dict,
     data_raw_dir: Path,
     notes: str = "",
+    start_timestamp_ms: Optional[int] = None,
 ) -> Path:
     """Write CSV + JSON sidecar to data_raw_dir.
+
+    The JSON sidecar satisfies the reproducibility requirements for the paper:
+    it records all RunConfig parameters, software versions, hardware metadata,
+    and the run start time so that any run can be independently reproduced.
 
     Parameters
     ----------
@@ -111,7 +123,10 @@ def save_run(
     scenario : int
     run_config_dict : dict — serialisable RunConfig fields for the sidecar
     data_raw_dir : Path   — destination directory (created if absent)
-    notes : str           — operator notes for the JSON sidecar
+    notes : str           — operator notes (battery %, NTP status, network conditions…)
+    start_timestamp_ms : int or None
+        Unix wall-clock in ms when the run started.  Defaults to now() if not
+        provided (only a fallback — callers should capture the true start time).
 
     Returns
     -------
@@ -127,18 +142,31 @@ def save_run(
         for rec in records:
             writer.writerow(asdict(rec))
 
+    # Flat top-level fields for the paper methodology table.  The full RunConfig
+    # is also stored under "run_config" for complete reproducibility.
+    rc = run_config_dict
     sidecar = {
         "run_id": run_id,
         "protocol": protocol,
         "scenario": scenario,
-        "run_config": run_config_dict,
+        # S1: rate in msg/s; S2: None.  Directly accessible without parsing run_config.
+        "rate_msg_s": rc.get("rate_msg_s"),
+        "duration_s": rc.get("duration_s"),
+        # Hardware / software metadata required for the paper Methods section.
+        "cse_version": CSE_VERSION,
+        "android_app_version": ANDROID_APP_VERSION,
+        "drone_model": DRONE_MODEL,
+        # Timing
+        "start_timestamp_ms": start_timestamp_ms if start_timestamp_ms is not None
+                               else time.time_ns() // 1_000_000,
+        "created_at_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        # Full config for reproducibility (includes ack_run_timeout_s, n_commands, etc.)
+        "run_config": rc,
         "notes": notes,
         "software_versions": {
             "python": sys.version,
-            # Import streamlit lazily to avoid circular imports during testing.
             "streamlit": _get_streamlit_version(),
         },
-        "created_at_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "n_records": len(records),
     }
 

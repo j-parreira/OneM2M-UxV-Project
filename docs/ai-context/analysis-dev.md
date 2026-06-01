@@ -54,7 +54,8 @@ ipykernel==6.29.4
 statsmodels==0.14.2
 ```
 
-`statsmodels` is added for post-hoc Dunn tests (pairwise comparisons after Kruskal-Wallis).
+`scikit-posthocs` provides `posthoc_dunn` for pairwise comparisons after Kruskal-Wallis.
+`statsmodels` is retained for Shapiro-Wilk normality checks and descriptive stats helpers.
 Create `src/analysis/.venv` — never install globally.
 
 ---
@@ -75,10 +76,13 @@ SCHEMA = {
     "header_bytes": "int32",
     "delivered": "bool",
     "seq": "int32",
+    # rate_msg_s is carried in the JSON sidecar, not the CSV — extract from run_id
+    # (e.g. "mqtt_s1_r5_20260601_run001" → rate=5) when grouping S1 runs by rate.
 }
 
 VALID_PROTOCOLS = {"mqtt", "http", "websocket", "coap"}
 VALID_SCENARIOS = {1, 2, 3}
+S1_RATES = {1, 5, 10}  # msg/s — used when grouping S1 data by rate
 ```
 
 Any file that fails schema validation is logged and excluded — never silently corrupted.
@@ -101,8 +105,9 @@ For each `(protocol, scenario, direction)` group, `02_compute_stats.py` outputs:
 
 ### Throughput
 
-- **msg/s**: `n_delivered / duration_s` per run, then mean ± std across runs
-- **KB/s**: `sum(payload_bytes, delivered only) / 1024 / duration_s`
+- **msg/s (S1)**: `n_delivered / duration_s` per run (duration_s is the configured S1 window)
+- **msg/s (S2)**: `n_delivered / actual_elapsed_s` where `actual_elapsed_s = (max(timestamp_ms) − min(timestamp_ms)) / 1000` — use observed elapsed, not configured timeout, because S2 ends when all ACKs arrive or timeout fires, not at a fixed wall-clock boundary
+- **KB/s**: `sum(payload_bytes, delivered only) / 1024 / elapsed_s`
 
 ### Packet loss (%)
 
@@ -136,7 +141,7 @@ For each metric (latency, throughput, packet loss):
    correction
    - Produces a 4×4 p-value matrix (protocol pairs)
 
-3. **Effect size** — Cliff's delta for each pair (`pairwise` from `statsmodels` or manual)
+3. **Effect size** — Cliff's delta for each pair (manual implementation — `statsmodels` does not provide Cliff's delta directly; compute from all pairwise comparisons of rank differences)
    - |d| < 0.147: negligible; 0.147–0.33: small; 0.33–0.474: medium; ≥0.474: large
 
 All test results are saved to `data/processed/statistical_tests.json`.
@@ -149,8 +154,9 @@ All test results are saved to `data/processed/statistical_tests.json`.
 
 ## Figures for the Paper
 
-All figures go to `src/analysis/figures/` and are referenced in the paper. Use IEEE column
-width: **3.5 inches** (single column) or **7.16 inches** (double column). DPI: 300 minimum.
+All figures go to `src/analysis/figures/` and are referenced in the paper. Use **MDPI column
+width: ~88 mm (single column) or ~180 mm (double column)** — approximately 3.46" and 7.09"
+respectively. DPI: 300 minimum.
 
 Use `matplotlib` with a consistent style:
 
@@ -160,7 +166,7 @@ plt.rcParams.update({
     "font.size": 9,
     "axes.labelsize": 9,
     "legend.fontsize": 8,
-    "font.family": "serif",    # matches IEEE paper font
+    "font.family": "sans-serif",   # MDPI uses sans-serif body (Helvetica / Arial)
 })
 ```
 

@@ -43,7 +43,7 @@ paper no formato **MDPI** (8–12 páginas) para a cadeira **Mobilidade em Siste
 |---|---|---|---|---|---|
 | WebSocket | 8180 | TCP | Flat JSON on persistent WS (`oneM2M.json`) | CSE reuses active WS connection | ✅ Both endpoints |
 | MQTT | 1883 | TCP | Publish to `/oneM2M/req/{orig}/id-in/json` (QoS 1) | CSE publishes to `/oneM2M/req/id-in/{orig}/json` | ✅ Both endpoints |
-| HTTP | 8080 | TCP | REST POST with `X-M2M-Origin/RI/RVI` headers | CSE POSTs to embedded callback server (port 8090/8181) | ✅ Both endpoints |
+| HTTP | 8080 | TCP | REST POST with `X-M2M-Origin/RI/RVI` headers | CSE POSTs to embedded callback (Streamlit→port 8090; Android RC→port 8181) | ✅ Both endpoints |
 | CoAP | 5683 | UDP | CON POST with oneM2M options (267/271/279/283) | HTTP/TCP workaround (Docker Desktop blocks UDP) | ✅ Both endpoints |
 
 > **CoAP notification constraint:** Docker Desktop on Windows does not route UDP from containers to LAN devices. CoAP notification delivery uses HTTP/TCP (embedded HTTPServer) as a lab-environment workaround. Outgoing CoAP/UDP requests are not affected. See `docs/architecture/system-overview.md §10`.
@@ -142,7 +142,7 @@ Open `src/android/` in Android Studio. Requires DJI SDK v4 and a valid DJI devel
 
 | Component | Status | Notes |
 |---|---|---|
-| `src/android/` | ⚠️ Implemented | All 4 protocol clients implemented; WebSocket end-to-end verified; MQTT/HTTP/CoAP pending full end-to-end test against ACME CSE |
+| `src/android/` | ✅ Complete | All 4 protocol clients implemented and end-to-end verified against ACME CSE v2025.11 |
 | `src/cse/` | ✅ Complete | All 4 protocols; WS keepalive + CoAP NOTIFY patches applied |
 | `src/frontend/` | ✅ Complete | All 4 protocol clients; S1 & S2 orchestrators; CSV logger; results viewer |
 | `src/analysis/` | 🔜 Not started | Pending benchmark data collection |

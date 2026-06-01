@@ -169,7 +169,11 @@ Library:        aiocoap 0.4.8 (Python) / Californium 2.7.4 (Android)
 
 ## Raw Data Schema
 
-### Per-message CSV (`data/raw/<protocol>_s<N>_<YYYYMMDD>_run<NNN>.csv`)
+### Per-message CSV
+
+Filename format:
+- Scenario 1: `<protocol>_s1_r<rate>_<YYYYMMDD>_run<NNN>.csv` (e.g. `mqtt_s1_r5_20260601_run001.csv`)
+- Scenario 2: `<protocol>_s2_<YYYYMMDD>_run<NNN>.csv` (e.g. `http_s2_20260601_run001.csv`)
 
 | Column | Type | Description | Source |
 |---|---|---|---|
@@ -192,15 +196,20 @@ Library:        aiocoap 0.4.8 (Python) / Californium 2.7.4 (Android)
 
 ```json
 {
-  "run_id": "websocket_s1_20260601_run001",
+  "run_id": "websocket_s1_r5_20260601_run001",
   "protocol": "websocket",
   "scenario": 1,
   "rate_msg_s": 5,
   "duration_s": 300,
   "cse_version": "2025.11",
   "android_app_version": "4.0",
-  "drone_model": "Mavic 2 Enterprise Advanced",
-  "start_timestamp_ms": 1748000000000
+  "drone_model": "DJI Mavic 2 Enterprise Advanced",
+  "start_timestamp_ms": 1748000000000,
+  "created_at_utc": "2026-06-01T10:00:00Z",
+  "notes": "Battery 82%, NTP synced, WiFi Private",
+  "n_records": 1500,
+  "run_config": { "rate_msg_s": 5, "duration_s": 300, "protocol": "websocket", "scenario": 1 },
+  "software_versions": { "python": "3.12.x", "streamlit": "1.45.1" }
 }
 ```
 

@@ -94,8 +94,17 @@ with col3:
 
 # Generate a preview of the run_id that will be used.
 from core.logger import next_run_id
-preview_run_id = next_run_id(protocol, scenario, cfg.data_raw_dir)
+preview_run_id = next_run_id(protocol, scenario, cfg.data_raw_dir, rate_msg_s)
 st.caption(f"Run ID (preview): **{preview_run_id}**")
+
+# NTP advisory — latency_ms is cross-device; both machines must be NTP-synced for valid results.
+if scenario in (1, 2):
+    st.warning(
+        "**NTP sync required:** `latency_ms` is computed across two independent clocks "
+        "(dev machine and Android RC). Ensure both are NTP-synchronised before starting a run. "
+        "On Android, enable automatic date/time in Settings → General Management → Date and Time.",
+        icon="⚠️",
+    )
 
 st.divider()
 

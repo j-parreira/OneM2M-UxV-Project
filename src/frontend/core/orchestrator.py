@@ -94,13 +94,18 @@ def run(
     RunResult
     """
     if not run_cfg.run_id:
-        run_cfg.run_id = next_run_id(run_cfg.protocol, run_cfg.scenario, config.data_raw_dir)
+        run_cfg.run_id = next_run_id(
+            run_cfg.protocol, run_cfg.scenario, config.data_raw_dir, run_cfg.rate_msg_s
+        )
 
     client = _make_client(run_cfg.protocol, config)
     records: list[MetricRecord] = []
     records_lock = threading.Lock()
     n_total = 0
     n_delivered = 0
+
+    # Capture run start time before any I/O for accurate sidecar reproducibility field.
+    start_timestamp_ms = time.time_ns() // 1_000_000
 
     if run_cfg.scenario == 1:
         n_total = (run_cfg.rate_msg_s or 1) * run_cfg.duration_s
@@ -123,6 +128,7 @@ def run(
         run_config_dict=asdict(run_cfg),
         data_raw_dir=config.data_raw_dir,
         notes=run_cfg.notes,
+        start_timestamp_ms=start_timestamp_ms,
     )
 
     delivered_records = [r for r in records if r.delivered and r.latency_ms is not None]

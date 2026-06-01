@@ -191,6 +191,28 @@ docker exec -it acme-cse /bin/bash
 
 ---
 
+## Debug / Integration Scripts
+
+The `test_*.py` files in `src/cse/` are **ad-hoc integration and debugging scripts** used
+during development to probe CSE behaviour directly. They are NOT part of the benchmark
+pipeline and should NOT be run during benchmark runs.
+
+| Script | Purpose |
+|---|---|
+| `test_connections.py` | Check TCP connectivity to all CSE ports |
+| `test_http_paths.py` | Probe HTTP resource paths and response bodies |
+| `test_nct_cnf.py` | Verify SUB `nct`/`cnf` field handling |
+| `test_notif2.py` / `test_notif3.py` | Subscription notification delivery tests |
+| `test_notif_debug.py` | Verbose notification debugging |
+| `test_paths.py` | Resource path resolution checks |
+| `test_ws_flow.py` | WebSocket handshake and oneM2M flow test |
+| `test_debug.py` | Miscellaneous debug helpers |
+
+These scripts require the CSE to be running (`docker compose up`) and may create/delete
+resources. Run manually from `src/cse/` with the appropriate `.venv` or system Python.
+
+---
+
 ## References
 
 - [ACME CSE GitHub](https://github.com/ankraft/ACME-oneM2M-CSE)

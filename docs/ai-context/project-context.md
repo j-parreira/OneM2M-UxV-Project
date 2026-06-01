@@ -87,7 +87,7 @@ docs/          Reference documentation. Read ai-context/ before starting any sub
 - ACME CSE must be reachable from the RC controller (same LAN — WiFi hotspot works)
 - CoAP uses UDP — DTLS not supported in ACME CSE v2025.11; use without TLS
 - All parameters must be reproducible: log timestamps, software versions, config state
-- **Deadline:** 2026-06-06 (paper MDPI, 8–12 pp.); minimum 2 protocols + preliminary results
+- **Deadline:** 2026-06-06 (paper MDPI, 8–12 pp.); all 4 protocols implemented and end-to-end verified
 
 ---
 
@@ -98,7 +98,7 @@ docs/          Reference documentation. Read ai-context/ before starting any sub
 | **2026-06-06** | Paper MDPI, 8–12 pp. — Mobilidade em Sistemas Computacionais (IPL Leiria) | 🔴 Hard |
 | After June 6 | Possível submissão a conferência (estrutura MDPI já adoptada — reutilizável) | — |
 
-Paper minimum: system architecture, methodology, ≥ 2 protocols with results.
+Paper: system architecture, methodology, all 4 protocols with results (≥30 runs × 4 protocols × 3 S1 rates + 4 protocols S2). Language: English.
 Paper structure: MDPI template (IMRaD) — Introduction, Related Work, System Design, Methodology, Results, Discussion, Conclusion.
 
 ---

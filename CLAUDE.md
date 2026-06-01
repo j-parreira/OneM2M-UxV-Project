@@ -6,9 +6,11 @@ Research project benchmarking OneM2M middleware across MQTT, WebSocket, HTTP, an
 DJI UxV (unmanned vehicle) operations. Academic context: IPL Leiria, Mestrado em Engenharia
 Informática.
 
+**Deliverable:** MDPI journal article, 8–12 pp., **English**, IMRaD structure.
+
 **Deadlines:**
-- **2026-06-06** — Paper MDPI, 8–12 páginas (Mobilidade em Sistemas Computacionais, IPL Leiria) — hard deadline
-- **After June 6** — Possível submissão a conferência (estrutura MDPI já adoptada — reutilizável)
+- **2026-06-06** — Paper MDPI (Mobilidade em Sistemas Computacionais, IPL Leiria) — hard deadline
+- **After June 6** — Possível submissão a conferência (estrutura MDPI reutilizável)
 
 See `docs/ai-context/project-context.md` for full system context before starting any task.
 
@@ -18,10 +20,10 @@ See `docs/ai-context/project-context.md` for full system context before starting
 
 | Directory        | Stack              | Entry Point                                      | Status |
 |-----------------|--------------------|-------------------------------------------------|--------|
-| `src/android/`  | Java, DJI SDK v4   | Android Studio project                          | ⚠️ All 4 implemented; WebSocket end-to-end verified; MQTT/HTTP/CoAP pending full e2e test |
+| `src/android/`  | Java, DJI SDK v4   | Android Studio project                          | ✅ All 4 protocols end-to-end verified (2026-05-31) |
 | `src/frontend/` | Python, Streamlit  | `python -m streamlit run app.py`                | ✅ All 4 protocols complete |
 | `src/cse/`      | Docker, ACME CSE   | `docker compose up`                             | ✅ Complete |
-| `src/analysis/` | Python             | Scripts in `scripts/`, notebooks in `notebooks/` | 🔜 Not started |
+| `src/analysis/` | Python             | Scripts in `scripts/`, notebooks in `notebooks/` | 🔜 Scripts scaffolded; pending data |
 | `docs/`         | Markdown           | Reference only, do not auto-generate            | — |
 
 ---
@@ -76,8 +78,11 @@ Always use `python -m pip install` inside the relevant activated environment.
 
 - **Raw data** → `data/raw/` — never modify these files
 - **Processed data** → `data/processed/`
-- **Filename format:** `<protocol>_s<scenario>_<YYYYMMDD>_run<NNN>.csv`
-  - Example: `mqtt_s1_20260520_run001.csv`
+- **Filename format:**
+  - Scenario 1: `<protocol>_s1_r<rate>_<YYYYMMDD>_run<NNN>.csv` (rate in msg/s)
+    - Example: `mqtt_s1_r5_20260601_run001.csv`
+  - Scenario 2: `<protocol>_s2_<YYYYMMDD>_run<NNN>.csv`
+    - Example: `http_s2_20260601_run001.csv`
 - Files >10 MB must be in `.gitignore` — do not commit large datasets
 
 ---
