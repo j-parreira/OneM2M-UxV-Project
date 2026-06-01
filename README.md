@@ -39,12 +39,14 @@ relatório académico para a cadeira **Mobilidade em Sistemas Computacionais** (
 
 ## Protocols Under Test
 
-| Protocol | Port | Transport | OneM2M Binding | Status |
-|---|---|---|---|---|
-| WebSocket | 8180 | TCP | Persistent; flat JSON; `oneM2M.json` subprotocol | ✅ Both endpoints |
-| MQTT | 1883 | TCP | AE client → Mosquitto broker → CSE MQTT client | ✅ Both endpoints |
-| HTTP | 8080 | TCP | RESTful POST; `/cse-in/...` paths; embedded callback | ✅ Both endpoints |
-| CoAP | 5683 | UDP | CON POST; flat JSON body; embedded callback server | ✅ Both endpoints |
+| Protocol | Port | Transport | Outgoing requests | Notification delivery | Status |
+|---|---|---|---|---|---|
+| WebSocket | 8180 | TCP | Flat JSON on persistent WS (`oneM2M.json`) | CSE reuses active WS connection | ✅ Both endpoints |
+| MQTT | 1883 | TCP | Publish to `/oneM2M/req/{orig}/id-in/json` (QoS 1) | CSE publishes to `/oneM2M/req/id-in/{orig}/json` | ✅ Both endpoints |
+| HTTP | 8080 | TCP | REST POST with `X-M2M-Origin/RI/RVI` headers | CSE POSTs to embedded callback server (port 8090/8181) | ✅ Both endpoints |
+| CoAP | 5683 | UDP | CON POST with oneM2M options (267/271/279/283) | HTTP/TCP workaround (Docker Desktop blocks UDP) | ✅ Both endpoints |
+
+> **CoAP notification constraint:** Docker Desktop on Windows does not route UDP from containers to LAN devices. CoAP notification delivery uses HTTP/TCP (embedded HTTPServer) as a lab-environment workaround. Outgoing CoAP/UDP requests are not affected. See `docs/architecture/system-overview.md §10`.
 
 ## Performance Metrics
 
@@ -140,21 +142,32 @@ Open `src/android/` in Android Studio. Requires DJI SDK v4 and a valid DJI devel
 
 | Component | Status | Notes |
 |---|---|---|
-| `src/android/` | ✅ Complete | All 4 transports (WS/MQTT/HTTP/CoAP); protocol selector spinner; compile + build passing |
-| `src/cse/` | ✅ Complete | All 4 protocols active; ACME CSE v2025.11 integration verified |
-| `src/frontend/` | ✅ Complete | All 4 protocol clients; Scenario 1 & 2 runners; CSV logger; results viewer |
-| `src/analysis/` | 🔜 Not built | Analysis pipeline — after benchmark data collection |
+| `src/android/` | ✅ Complete | All 4 transports; end-to-end tested against ACME CSE v2025.11 (2026-05-31) |
+| `src/cse/` | ✅ Complete | All 4 protocols; WS keepalive + CoAP NOTIFY patches applied |
+| `src/frontend/` | ✅ Complete | All 4 protocol clients; S1 & S2 orchestrators; CSV logger; results viewer |
+| `src/analysis/` | 🔜 Not started | Pending benchmark data collection |
 
-**Next step:** end-to-end integration test (all 4 protocols vs real CSE), then benchmark runs (≥30 runs × 4 protocols × 2 scenarios).
+**Next step:** benchmark runs — Scenarios 1 & 2, ≥30 runs × 4 protocols.  
+**Deadline:** 2026-06-06 (MDPI paper submission)
 
 **Deadline:** 2026-06-06 (relatório académico, Mobilidade em Sistemas Computacionais)
+
+## Key Technical Documents
+
+| Document | Content |
+|---|---|
+| `docs/architecture/system-overview.md` | Full protocol flows, resource tree, message formats, lab constraints |
+| `docs/protocols/test-scenarios.md` | Per-protocol configuration, CSV schema, benchmark checklist |
+| `src/cse/README.md` | CSE setup, patches, resource tree |
+| `src/frontend/CLAUDE.md` | Streamlit architecture, protocol client details |
+| `src/android/CLAUDE.md` | Android architecture, OneM2MSession lifecycle |
 
 ## Academic Context
 
 - **Institution:** Instituto Politécnico de Leiria (IPL)
 - **Programme:** Mestrado em Engenharia Informática
-- **Deliverable:** Relatório académico — cadeira Mobilidade em Sistemas Computacionais
-- **Language:** Portuguese (report) / English (possible future conference paper)
+- **Deliverable:** MDPI journal article (format confirmed 2026-05-31)
+- **Course:** Mobilidade em Sistemas Computacionais — deadline 2026-06-06
 
 ## License
 
