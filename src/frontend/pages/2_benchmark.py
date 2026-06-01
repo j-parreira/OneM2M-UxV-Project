@@ -27,6 +27,38 @@ st.title("Benchmark Orchestrator")
 cfg = load_config()
 
 # ------------------------------------------------------------------
+# Scenario reference cards
+# ------------------------------------------------------------------
+
+st.subheader("Scenarios")
+
+col_s1, col_s2 = st.columns(2)
+
+with col_s1:
+    st.info(
+        "**Scenario 1 — Telemetry Uplink**\n\n"
+        "Drone hovers at fixed altitude. Android app pushes telemetry CINs to "
+        "`cse-in/uxv/telemetry` at a fixed rate. Dashboard receives each CIN via "
+        "subscription notification and records arrival timestamp.\n\n"
+        "**Measures:** delivery latency (`timestamp_ms − t_send_ms`), packet loss "
+        "(gaps in `seq`), protocol overhead (`header_bytes / total_bytes`). "
+        "Rates: 1, 5, 10 msg/s · Duration: 5 min."
+    )
+
+with col_s2:
+    st.info(
+        "**Scenario 2 — Command Round-Trip**\n\n"
+        "Dashboard sends 50 command CINs in rapid succession to `cse-in/uxv/commands`. "
+        "Android receives each via subscription notification, dispatches to DJI SDK, "
+        "and sends an ACK CIN to `cse-in/uxv/ack` with timestamps.\n\n"
+        "**Measures:** CIN create RTT (`cin_create_ms`, Streamlit→CSE, NTP-free); "
+        "command latency (`t_recv_ms − t_cmd_ms`, cross-device NTP); "
+        "delivery rate within 10 s timeout."
+    )
+
+st.divider()
+
+# ------------------------------------------------------------------
 # Run configuration form
 # ------------------------------------------------------------------
 

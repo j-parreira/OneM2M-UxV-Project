@@ -174,6 +174,8 @@ def _live_display() -> None:
 
     Using @st.fragment avoids a full-page rerun on each tick, which eliminates
     the browser title-bar spinner while the live display is updating.
+    Displays a 3×3 grid of telemetry metrics from the Android CIN payload:
+    {seq, t_send_ms, lat, lng, alt, velX, velY, velZ, heading, bat, flightState, gimbalPitch}.
     """
     # Drain the telemetry queue — keep only the latest reading.
     latest_tel: Optional[dict] = None
@@ -184,25 +186,57 @@ def _live_display() -> None:
             break
 
     if latest_tel:
-        tel_col1, tel_col2, tel_col3, tel_col4 = st.columns(4)
-        with tel_col1:
-            lat = latest_tel.get("lat", "—")
-            lng = latest_tel.get("lng", "—")
-            st.metric("GPS", f"{lat}, {lng}")
-        with tel_col2:
-            alt = latest_tel.get("alt", "—")
-            st.metric("Altitude", f"{alt} m" if alt != "—" else "—")
-        with tel_col3:
-            bat_obj = latest_tel.get("bat", {})
-            bat = bat_obj.get("lvl", "—") if isinstance(bat_obj, dict) else "—"
-            st.metric("Battery", f"{bat}%" if bat != "—" else "—")
-        with tel_col4:
+        # Row 1: position + kinematics
+        r1a, r1b, r1c = st.columns(3)
+        with r1a:
+            lat = latest_tel.get("lat")
+            lng = latest_tel.get("lng")
+            if lat is not None and lng is not None:
+                st.metric("GPS", f"{lat:.5f}, {lng:.5f}")
+            else:
+                st.metric("GPS", "—")
+        with r1b:
+            alt = latest_tel.get("alt")
+            st.metric("Altitude", f"{alt:.1f} m" if alt is not None else "—")
+        with r1c:
             vel_x = latest_tel.get("velX")
             vel_y = latest_tel.get("velY")
             if vel_x is not None and vel_y is not None:
                 st.metric("Speed", f"{math.hypot(vel_x, vel_y):.1f} m/s")
             else:
                 st.metric("Speed", "—")
+
+        # Row 2: orientation + battery + flight state
+        r2a, r2b, r2c = st.columns(3)
+        with r2a:
+            heading = latest_tel.get("heading")
+            st.metric("Heading", f"{heading:.1f}°" if heading is not None else "—")
+        with r2b:
+            bat_obj = latest_tel.get("bat", {})
+            bat_lvl = bat_obj.get("lvl") if isinstance(bat_obj, dict) else None
+            bat_v = bat_obj.get("v") if isinstance(bat_obj, dict) else None
+            label = f"{bat_lvl}%" if bat_lvl is not None else "—"
+            delta = f"{bat_v:.1f} V" if bat_v is not None else None
+            st.metric("Battery", label, delta=delta, delta_color="off")
+        with r2c:
+            state = latest_tel.get("flightState", "—")
+            st.metric("Flight State", state)
+
+        # Row 3: gimbal + sequence counter + telemetry age
+        r3a, r3b, r3c = st.columns(3)
+        with r3a:
+            gp = latest_tel.get("gimbalPitch")
+            st.metric("Gimbal Pitch", f"{gp:.1f}°" if gp is not None else "—")
+        with r3b:
+            seq = latest_tel.get("seq")
+            st.metric("Seq #", seq if seq is not None else "—")
+        with r3c:
+            t_send = latest_tel.get("t_send_ms")
+            if t_send is not None:
+                age_ms = int(time.time() * 1000) - t_send
+                st.metric("CIN age", f"{age_ms} ms")
+            else:
+                st.metric("CIN age", "—")
     else:
         st.info("No telemetry yet — connect and ensure the drone is active.")
 

@@ -1,13 +1,20 @@
 """OneM2M UxV Benchmark Dashboard — entry point.
 
+Benchmarks OneM2M middleware (ACME CSE v2025.11) across 4 transports for
+DJI UxV operations. Academic context: IPL Leiria, MSc Engenharia Informática.
+
 Run with:
     streamlit run app.py
 
 Pages:
-    1_manual.py   — Manual command dispatch + live telemetry
-    2_benchmark.py — Automated benchmark orchestrator
-    3_results.py  — Quick view of collected data/raw/ CSVs
+    1_manual.py   — Manual command dispatch + live telemetry (pre-benchmark validation)
+    2_benchmark.py — Automated benchmark orchestrator (S1/S2 runs → data/raw/)
+    3_results.py  — Aggregate view of collected CSVs (latency, overhead, comparison)
 """
+import re
+from collections import defaultdict
+from pathlib import Path
+
 import requests
 import streamlit as st
 
@@ -19,27 +26,48 @@ st.set_page_config(
     layout="wide",
 )
 
+# ------------------------------------------------------------------
+# Title + research context
+# ------------------------------------------------------------------
+
 st.title("OneM2M UxV Benchmark Dashboard")
-st.caption("IPL Leiria — Mestrado em Engenharia Informática — Multi-Protocol Performance Study")
+st.markdown(
+    "**Research objective:** Quantify end-to-end latency, throughput, packet loss, and "
+    "protocol overhead for OneM2M middleware across **WebSocket, MQTT, HTTP, and CoAP** "
+    "in a DJI UxV operational scenario (IPL Leiria, MSc Engenharia Informática). "
+    "Scenarios: S1 — sustained telemetry uplink (drone→CSE→dashboard); "
+    "S2 — command round-trip (dashboard→CSE→drone→ACK). "
+    "Target: ≥30 runs per protocol per scenario."
+)
 
 # ------------------------------------------------------------------
 # Load config (cached per session)
 # ------------------------------------------------------------------
 
+
 @st.cache_resource
 def get_config():
+    """Load and cache configuration for the session lifetime."""
     return load_config()
+
 
 cfg = get_config()
 
+st.divider()
+
 # ------------------------------------------------------------------
-# CSE health check
+# System readiness checks
 # ------------------------------------------------------------------
 
-st.subheader("CSE Status")
+st.subheader("System Readiness")
+
 
 def check_cse(cfg) -> tuple[bool, str]:
-    """GET /id-in and return (healthy, message)."""
+    """GET /id-in — verify CSE is healthy (ty=5 in response body).
+
+    Returns:
+        (healthy, status_message)
+    """
     try:
         resp = requests.get(
             f"{cfg.cse_http_base}/id-in",
@@ -52,31 +80,150 @@ def check_cse(cfg) -> tuple[bool, str]:
             timeout=3.0,
         )
         if resp.status_code == 200 and ('"ty":5' in resp.text or '"ty": 5' in resp.text):
-            return True, f"ACME CSE reachable at {cfg.cse_http_base} (HTTP 200, ty=5)"
-        return False, f"Unexpected response: HTTP {resp.status_code}"
+            return True, f"ACME CSE v2025.11 at `{cfg.cse_http_base}`"
+        return False, f"HTTP {resp.status_code} — unexpected response"
     except requests.ConnectionError:
-        return False, f"Cannot reach {cfg.cse_http_base} — is Docker running?"
+        return False, f"Cannot reach `{cfg.cse_http_base}` — start Docker Compose"
     except requests.Timeout:
-        return False, "Connection timeout"
+        return False, "Timeout (3 s)"
 
-healthy, msg = check_cse(cfg)
-if healthy:
-    st.success(msg)
-else:
-    st.error(msg)
 
-if st.button("Re-check CSE"):
+def check_android_ae(cfg) -> tuple[bool, str]:
+    """GET /cse-in/uxv — verify Android AE is registered (ty=2).
+
+    Returns:
+        (registered, status_message)
+    """
+    try:
+        resp = requests.get(
+            f"{cfg.cse_http_base}/cse-in/uxv",
+            headers={
+                "X-M2M-Origin": "CAdmin",
+                "X-M2M-RI": "ae-check",
+                "X-M2M-RVI": "3",
+                "Accept": "application/json",
+            },
+            timeout=3.0,
+        )
+        if resp.status_code == 200 and ('"ty":2' in resp.text or '"ty": 2' in resp.text):
+            return True, "AE `/cse-in/uxv` registered"
+        if resp.status_code == 404:
+            return False, "AE not found — launch Android app"
+        return False, f"HTTP {resp.status_code}"
+    except requests.ConnectionError:
+        return False, "CSE unreachable — check step 1"
+    except requests.Timeout:
+        return False, "Timeout (3 s)"
+
+
+def count_runs(data_raw_dir: Path) -> dict:
+    """Count completed runs per (protocol, scenario) from CSV filenames.
+
+    Only files matching the canonical naming convention are counted:
+    <protocol>_s<N>_<YYYYMMDD>_run<NNN>.csv
+
+    Returns:
+        dict mapping (protocol, scenario_int) → count
+    """
+    counts: dict[tuple[str, int], int] = defaultdict(int)
+    pattern = re.compile(r"^(websocket|mqtt|http|coap)_s([12])_\d{8}_run\d+\.csv$")
+    if data_raw_dir.exists():
+        for f in data_raw_dir.glob("*.csv"):
+            m = pattern.match(f.name)
+            if m:
+                counts[(m.group(1), int(m.group(2)))] += 1
+    return counts
+
+
+col_cse, col_ae, col_data = st.columns(3)
+
+cse_ok, cse_msg = check_cse(cfg)
+ae_ok, ae_msg = check_android_ae(cfg)
+counts = count_runs(cfg.data_raw_dir)
+
+PROTOCOLS = ["websocket", "mqtt", "http", "coap"]
+TARGET = 30
+total_runs = sum(counts.values())
+needed = len(PROTOCOLS) * 2 * TARGET
+
+with col_cse:
+    if cse_ok:
+        st.success(f"**1. CSE** ✓\n\n{cse_msg}")
+    else:
+        st.error(f"**1. CSE** ✗\n\n{cse_msg}")
+
+with col_ae:
+    if ae_ok:
+        st.success(f"**2. Android AE** ✓\n\n{ae_msg}")
+    else:
+        st.warning(f"**2. Android AE** —\n\n{ae_msg}")
+
+with col_data:
+    pct = int(total_runs / needed * 100) if needed > 0 else 0
+    if total_runs >= needed:
+        st.success(f"**3. Data** ✓\n\n{total_runs}/{needed} runs ({pct}%)")
+    elif total_runs > 0:
+        st.info(f"**3. Data** — in progress\n\n{total_runs}/{needed} runs ({pct}%)")
+    else:
+        st.warning(f"**3. Data** — not started\n\n0/{needed} runs")
+
+# ------------------------------------------------------------------
+# Collection progress matrix
+# ------------------------------------------------------------------
+
+st.divider()
+st.subheader("Data Collection Progress")
+st.caption(f"Target: {TARGET} runs per (protocol × scenario). Counts valid CSV files in `{cfg.data_raw_dir}`.")
+
+for proto in PROTOCOLS:
+    col_proto, col_s1, col_s2 = st.columns([1, 3, 3])
+    s1_n = counts.get((proto, 1), 0)
+    s2_n = counts.get((proto, 2), 0)
+    with col_proto:
+        st.markdown(f"**{proto.upper()}**")
+    with col_s1:
+        st.progress(min(1.0, s1_n / TARGET), text=f"S1 Telemetry: {s1_n}/{TARGET}")
+    with col_s2:
+        st.progress(min(1.0, s2_n / TARGET), text=f"S2 Commands: {s2_n}/{TARGET}")
+
+if st.button("↻ Refresh"):
     st.rerun()
 
 # ------------------------------------------------------------------
-# Configuration summary
+# Navigation guide
 # ------------------------------------------------------------------
 
-st.subheader("Active Configuration")
+st.divider()
+st.subheader("Workflow")
 
-col1, col2 = st.columns(2)
-with col1:
-    st.markdown(f"""
+col_m, col_b, col_r = st.columns(3)
+with col_m:
+    st.markdown("""
+**Manual** _(page 1)_
+
+Pre-benchmark validation: connect via a specific protocol, send individual commands, verify live telemetry is flowing. Use before each benchmark session to confirm end-to-end connectivity.
+""")
+with col_b:
+    st.markdown("""
+**Benchmark** _(page 2)_
+
+Automated experiment runner. Select protocol + scenario, configure rate/duration/n_commands, click Run. Logs one CSV + one JSON sidecar to `data/raw/` per run.
+""")
+with col_r:
+    st.markdown("""
+**Results** _(page 3)_
+
+Aggregate view of all collected CSVs: protocol comparison table (latency/jitter/loss/overhead), latency distributions, CDF, CIN create RTT, overhead breakdown.
+""")
+
+# ------------------------------------------------------------------
+# Active configuration (collapsed by default)
+# ------------------------------------------------------------------
+
+with st.expander("Active Configuration"):
+    col1, col2 = st.columns(2)
+    with col1:
+        st.markdown(f"""
 | Parameter | Value |
 |---|---|
 | CSE Host | `{cfg.cse_host}` |
@@ -85,20 +232,12 @@ with col1:
 | MQTT Port | `{cfg.cse_mqtt_port}` |
 | CoAP Port | `{cfg.cse_coap_port}` |
 """)
-with col2:
-    st.markdown(f"""
+    with col2:
+        st.markdown(f"""
 | Parameter | Value |
 |---|---|
 | Callback Host | `{cfg.callback_host}` |
 | HTTP Callback Port | `{cfg.callback_http_port}` |
 | CoAP Callback Port | `{cfg.callback_coap_port}` |
 | Data Directory | `{cfg.data_raw_dir}` |
-""")
-
-st.divider()
-st.markdown("""
-**Navigation:**
-- **Manual** — Send individual commands, view live telemetry
-- **Benchmark** — Run automated experiments (Scenarios 1 & 2), save to `data/raw/`
-- **Results** — Quick overview of collected run CSVs
 """)
