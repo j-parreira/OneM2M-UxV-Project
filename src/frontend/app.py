@@ -2,6 +2,7 @@
 
 Benchmarks OneM2M middleware (ACME CSE v2025.11) across 4 transports for
 DJI UxV operations. Academic context: IPL Leiria, MSc Engenharia Informática.
+Deliverable: MDPI paper, 8–12 pages, Mobilidade em Sistemas Computacionais.
 
 Run with:
     streamlit run app.py
@@ -34,10 +35,11 @@ st.title("OneM2M UxV Benchmark Dashboard")
 st.markdown(
     "**Research objective:** Quantify end-to-end latency, throughput, packet loss, and "
     "protocol overhead for OneM2M middleware across **WebSocket, MQTT, HTTP, and CoAP** "
-    "in a DJI UxV operational scenario (IPL Leiria, MSc Engenharia Informática). "
+    "in a DJI UxV operational scenario. "
     "Scenarios: S1 — sustained telemetry uplink (drone→CSE→dashboard); "
     "S2 — command round-trip (dashboard→CSE→drone→ACK). "
-    "Target: ≥30 runs per protocol per scenario."
+    "Target: ≥30 runs per protocol per scenario. "
+    "Deliverable: MDPI paper, 8–12 pp. — IPL Leiria, MSc Engenharia Informática."
 )
 
 # ------------------------------------------------------------------

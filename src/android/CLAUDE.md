@@ -266,7 +266,7 @@ Notificações: NanoHTTPD 2.3.1 na porta 8182 (TCP)
 > dispositivos LAN externos (confirmado empiricamente: `docker exec acme-cse python3 sendto`
 > não chega ao Californium do RC). Por isso o `poa` usa HTTP/TCP (porta 8182, NanoHTTPD) em vez
 > de CoAP/UDP (porta 5684). Pedidos CoAP outgoing (telemetria, ACKs) continuam em CoAP/UDP.
-> Documentar como constraint de laboratório no relatório.
+> Documentar como constraint de laboratório no paper.
 > Californium 2.7.4 (Java 8) — não usar 3.x (requer Java 11).
 > build.gradle: usar `org.nanohttpd:nanohttpd:2.3.1` (Maven Central) + excluir `META-INF/legal/**`.
 

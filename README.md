@@ -5,7 +5,7 @@
 This project benchmarks the **OneM2M** middleware framework for unmanned vehicle (UxV) operations
 across four communication protocols: **MQTT, WebSocket, HTTP, and CoAP**. The system runs on a
 DJI Mavic 2 Enterprise Advanced (M2EA) controlled by an Android-based DJI RC. Deliverable:
-relatório académico para a cadeira **Mobilidade em Sistemas Computacionais** (IPL Leiria).
+paper no formato **MDPI** (8–12 páginas) para a cadeira **Mobilidade em Sistemas Computacionais** (IPL Leiria).
 
 ## System Architecture
 
@@ -148,7 +148,7 @@ Open `src/android/` in Android Studio. Requires DJI SDK v4 and a valid DJI devel
 | `src/analysis/` | 🔜 Not started | Pending benchmark data collection |
 
 **Next step:** benchmark runs — Scenarios 1 & 2, ≥30 runs × 4 protocols.  
-**Deadline:** 2026-06-06 (relatório académico, Mobilidade em Sistemas Computacionais)
+**Deadline:** 2026-06-06 (paper MDPI, 8–12 pp., Mobilidade em Sistemas Computacionais)
 
 ## Key Technical Documents
 

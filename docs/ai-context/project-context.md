@@ -87,7 +87,7 @@ docs/          Reference documentation. Read ai-context/ before starting any sub
 - ACME CSE must be reachable from the RC controller (same LAN — WiFi hotspot works)
 - CoAP uses UDP — DTLS not supported in ACME CSE v2025.11; use without TLS
 - All parameters must be reproducible: log timestamps, software versions, config state
-- **Deadline:** 2026-06-06 (relatório académico); minimum 2 protocols + preliminary results
+- **Deadline:** 2026-06-06 (paper MDPI, 8–12 pp.); minimum 2 protocols + preliminary results
 
 ---
 
@@ -95,11 +95,11 @@ docs/          Reference documentation. Read ai-context/ before starting any sub
 
 | Deadline | Artefact | Status |
 |---|---|---|
-| **2026-06-06** | Relatório académico — Mobilidade em Sistemas Computacionais (IPL Leiria) | 🔴 Hard |
-| After June 6 | Possível artigo de conferência (não prioritário) | — |
+| **2026-06-06** | Paper MDPI, 8–12 pp. — Mobilidade em Sistemas Computacionais (IPL Leiria) | 🔴 Hard |
+| After June 6 | Possível submissão a conferência (estrutura MDPI já adoptada — reutilizável) | — |
 
-Report minimum: system architecture, methodology, ≥ 2 protocols with results.
-Report structure: standard academic conventions — not yet fully defined.
+Paper minimum: system architecture, methodology, ≥ 2 protocols with results.
+Paper structure: MDPI template (IMRaD) — Introduction, Related Work, System Design, Methodology, Results, Discussion, Conclusion.
 
 ---
 
@@ -148,7 +148,7 @@ the CSE IP via a field in the main screen.
 1. **End-to-end integration test** — MQTT first, then HTTP/CoAP against real ACME CSE
 2. **Benchmark runs** — all 4 protocols, Scenarios 1 & 2, ≥30 runs each
 3. **`src/analysis/`** — statistics + figures (Kruskal-Wallis, Dunn, Cliff's delta)
-4. **Relatório académico** writing
+4. **Paper MDPI** writing (8–12 pp., template MDPI, IMRaD)
 
 ---
 
