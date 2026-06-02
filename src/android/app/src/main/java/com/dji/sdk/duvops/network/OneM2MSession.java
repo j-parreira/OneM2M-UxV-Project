@@ -569,9 +569,20 @@ public class OneM2MSession implements ProtocolClient, DroneCommandListener {
     /**
      * Parseia e despacha um JSON de comando ao {@code commandListener}.
      *
-     * <p>Regista {@code t_recv_ms} antes do switch e envia um ACK CIN a
-     * {@code cse-in/uxv/ack} após dispatch para medição de latência (Cenário 2).
-     * O Streamlit deve incluir {@code t_cmd_ms} e {@code seq_cmd} no CIN de comando.
+     * <p>Regista {@code t_recv_ms} antes de qualquer processamento, envia o ACK
+     * imediatamente via {@link #sendCommandAck}, e só depois despacha o comando DJI
+     * num thread de background separado.
+     *
+     * <p>Contexto: alguns comandos DJI SDK (ex: startTakeoff) bloqueiam o thread de
+     * callback do OkHttp até ao callback de conclusão (~10-11 s para takeoff físico).
+     * Isso atrasaria o ACK e impediria a recepção de comandos seguintes durante o
+     * burst do Cenário 2. Com dispatch em background thread:
+     * <ul>
+     *   <li>O ACK chega ao Streamlit em ms (dentro do timeout de 10 s)</li>
+     *   <li>O input thread do OkHttp fica livre para receber o comando seguinte</li>
+     *   <li>Comandos DJI podem sobrepor-se — aceitável no benchmark (foco no protocolo)</li>
+     * </ul>
+     * {@code t_exec_ms} no ACK captura o instante imediatamente antes do dispatch.
      *
      * @param commandJson JSON do campo {@code con} do CIN recebido
      */
@@ -581,64 +592,70 @@ public class OneM2MSession implements ProtocolClient, DroneCommandListener {
         try {
             JSONObject data = new JSONObject(commandJson);
             if (!data.has("command")) return;
-            String command = data.getString("command");
+            final String command = data.getString("command");
             if (commandLogListener != null) commandLogListener.onCommandReceived(command, commandJson);
-            switch (command) {
-                case "takeoff":    commandListener.onTakeOff(); break;
-                case "land":       commandListener.onLand(); break;
-                case "motors":
-                    commandListener.onMotors(data.optBoolean("state", false)); break;
-                case "startGoHome": commandListener.onGoHome(); break;
-                case "virtualSticks":
-                    commandListener.onVirtualStickState(data.optBoolean("state", false)); break;
-                case "virtualSticksInput":
-                    commandListener.onVirtualStickInput(
-                            (float) data.optDouble("roll",     0),
-                            (float) data.optDouble("pitch",    0),
-                            (float) data.optDouble("yaw",      0),
-                            (float) data.optDouble("throttle", 0)); break;
-                case "gpsInput":
-                case "gpsInput360Mapping":
-                    if (data.has("lat") && data.has("lng"))
-                        commandListener.onMoveTo(data.getDouble("lat"), data.getDouble("lng"));
-                    break;
-                case "perform360":  commandListener.onPerform360(); break;
-                case "identify":
-                    commandListener.onIdentify(data.optBoolean("state", false)); break;
-                case "startMission":
-                    commandListener.onStartMission(
-                            data.optString("startAction"),
-                            data.optString("endAction"),
-                            data.optInt("repeat", 0),
-                            (float) data.optDouble("altitude", 0),
-                            data.has("path") ? data.getJSONArray("path").toString() : null); break;
-                case "stopMission":  commandListener.onStopMission(); break;
-                case "pauseMission": commandListener.onPauseMission(); break;
-                case "setZoom":
-                    commandListener.onSetZoom((float) data.optDouble("factor", 1.0)); break;
-                case "setCameraMode":
-                    commandListener.onSetCameraMode(data.optString("mode", "RGB")); break;
-                case "gimbalAngle":
-                    commandListener.onGimbalAngle(
-                            (float) data.optDouble("pitch", 0),
-                            (float) data.optDouble("yaw",   0),
-                            data.optString("mode", "absolute")); break;
-                case "gimbalReset":  commandListener.onGimbalReset(); break;
-                case "setTelemetryRate":
-                    // Comando de controlo de benchmark — não é um comando de voo
-                    int newIntervalMs = data.optInt("intervalMs", 250);
-                    if (telemetryRateListener != null) {
-                        telemetryRateListener.onSetTelemetryRate(newIntervalMs);
-                    }
-                    break;
-                default: Log.d(TAG, "Unknown command: " + command);
-            }
-            // Enviar ACK para medição de latência de comandos (Cenário 2).
-            // O Streamlit mede: latência = t_recv_ms - t_cmd_ms.
+
+            // ACK enviado imediatamente — t_exec_ms ≈ t_recv_ms (instante antes do dispatch).
+            // ws.send() enfileira no output thread do OkHttp; chega ao Streamlit em ms.
             sendCommandAck(command,
                     data.optInt("seq_cmd", -1),
                     data.optLong("t_cmd_ms", 0),
                     tRecvMs);
+
+            // DJI SDK dispatch em background thread para não bloquear o input thread do OkHttp.
+            // Operações como startTakeoff bloqueiam o thread chamador ~11 s (aguardam callback DJI).
+            final boolean hasLatLng = data.has("lat") && data.has("lng");
+            final boolean hasState  = data.has("state");
+            final boolean hasPath   = data.has("path");
+            final boolean optState  = data.optBoolean("state", false);
+            final float   optRoll   = (float) data.optDouble("roll",     0);
+            final float   optPitch  = (float) data.optDouble("pitch",    0);
+            final float   optYaw    = (float) data.optDouble("yaw",      0);
+            final float   optThrot  = (float) data.optDouble("throttle", 0);
+            final double  optLat    = data.optDouble("lat", 0);
+            final double  optLng    = data.optDouble("lng", 0);
+            final float   optFactor = (float) data.optDouble("factor",   1.0);
+            final String  optMode   = data.optString("mode", "absolute");
+            final String  optCamMode= data.optString("mode", "RGB");
+            final int     optIval   = data.optInt("intervalMs", 250);
+            final String  optStart  = data.optString("startAction");
+            final String  optEnd    = data.optString("endAction");
+            final int     optRepeat = data.optInt("repeat", 0);
+            final float   optAlt    = (float) data.optDouble("altitude", 0);
+            final String  optPath   = hasPath ? data.getJSONArray("path").toString() : null;
+
+            new Thread(() -> {
+                switch (command) {
+                    case "takeoff":    commandListener.onTakeOff(); break;
+                    case "land":       commandListener.onLand(); break;
+                    case "motors":     commandListener.onMotors(optState); break;
+                    case "startGoHome": commandListener.onGoHome(); break;
+                    case "virtualSticks":
+                        commandListener.onVirtualStickState(optState); break;
+                    case "virtualSticksInput":
+                        commandListener.onVirtualStickInput(optRoll, optPitch, optYaw, optThrot); break;
+                    case "gpsInput":
+                    case "gpsInput360Mapping":
+                        if (hasLatLng) commandListener.onMoveTo(optLat, optLng); break;
+                    case "perform360":  commandListener.onPerform360(); break;
+                    case "identify":    commandListener.onIdentify(optState); break;
+                    case "startMission":
+                        commandListener.onStartMission(optStart, optEnd, optRepeat, optAlt, optPath); break;
+                    case "stopMission":  commandListener.onStopMission(); break;
+                    case "pauseMission": commandListener.onPauseMission(); break;
+                    case "setZoom":      commandListener.onSetZoom(optFactor); break;
+                    case "setCameraMode": commandListener.onSetCameraMode(optCamMode); break;
+                    case "gimbalAngle":
+                        commandListener.onGimbalAngle(optPitch, optYaw, optMode); break;
+                    case "gimbalReset":  commandListener.onGimbalReset(); break;
+                    case "setTelemetryRate":
+                        if (telemetryRateListener != null)
+                            telemetryRateListener.onSetTelemetryRate(optIval);
+                        break;
+                    default: Log.d(TAG, "Unknown command: " + command);
+                }
+            }, "dji-dispatch-" + command).start();
+
         } catch (JSONException e) {
             Log.e(TAG, "dispatchCommand: " + e.getMessage());
         }
@@ -653,7 +670,8 @@ public class OneM2MSession implements ProtocolClient, DroneCommandListener {
      *   <li>{@code seq_cmd} — sequência do Streamlit (-1 se não fornecido)</li>
      *   <li>{@code t_cmd_ms} — timestamp de envio pelo Streamlit (0 se não fornecido)</li>
      *   <li>{@code t_recv_ms} — timestamp de recepção na app (epoch ms)</li>
-     *   <li>{@code t_exec_ms} — timestamp após dispatch (epoch ms)</li>
+     *   <li>{@code t_exec_ms} — timestamp imediatamente antes do dispatch DJI SDK (≈ t_recv_ms);
+     *       enviado antes do dispatch para garantir entrega dentro do timeout Streamlit de 10 s</li>
      * </ul>
      */
     private void sendCommandAck(String command, int seqCmd, long tCmdMs, long tRecvMs) {

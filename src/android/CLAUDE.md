@@ -519,6 +519,7 @@ o mesmo originator em `associatedConnections`, reutiliza-a.
 | CoAP rsc=5000 em todas as ops (4.00 BAD_REQUEST) | Binding incorreto (flat JSON no body); corrigido para opções CoAP 279/283/271/267 + body=pc only — já corrigido (2026-05-31) |
 | CoAP: Android nunca recebe notificações push do CSE (ack cni=0) | Docker Desktop no Windows bloqueia UDP de containers para dispositivos LAN externos; Californium CoapServer (porta 5684) nunca disparava. Corrigido (2026-05-31): poa mudou para `http://rc_ip:8182` (NanoHTTPD), notificações chegam via HTTP/TCP. |
 | `WifiManager.getConnectionInfo()` deprecated | `@SuppressWarnings("deprecation")` em HTTP e CoAP — RC usa API ≤ 29, funciona |
+| S2 ACK timeout: ~40% packet loss em takeoff/land no Cenário 2 | DJI SDK `startTakeoff`/`startLanding` bloqueiam o thread de callback OkHttp ~11 s (aguardam confirmação física do drone). O ACK chegava ao Streamlit após o timeout de 10 s/comando, e o comando seguinte ficava bloqueado na fila OkHttp. Corrigido (2026-06-02) em `OneM2MSession.dispatchCommand`: ACK enviado imediatamente antes do switch; dispatch DJI feito em background thread separado. |
 
 ---
 
