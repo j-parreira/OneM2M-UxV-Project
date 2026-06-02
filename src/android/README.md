@@ -150,13 +150,13 @@ The app sends a `m2m:cin` to `cse-in/uxv/telemetry` at a configurable rate (defa
 
 Full field reference: [`docs/telemetry-reference.md`](docs/telemetry-reference.md)
 
-**Changing the telemetry rate** (Scenario 1 requires 1, 5, 10 msg/s):
+**Changing the telemetry rate** (Scenario 1 uses 4 msg/s and 16 msg/s):
 
 ```json
-{"command": "setTelemetryRate", "intervalMs": 200}
+{"command": "setTelemetryRate", "intervalMs": 250}
 ```
 
-Rates: `1000` ms = 1 msg/s · `200` ms = 5 msg/s · `100` ms = 10 msg/s
+Rates: `250` ms = 4 msg/s (single drone) · `62` ms = 16 msg/s (4 drones simulated)
 
 ---
 
@@ -327,8 +327,8 @@ All 4 transports are implemented. The spinner in the `DuvopsView` top bar select
 - **Project:** OneM2M UxV Multi-Protocol Study — IPL Leiria, MSc Computer Engineering
 - **Paper deadline:** 2026-06-06 (Mobilidade em Sistemas Computacionais)
 - **Benchmark scenarios:**
-  - **Scenario 1** — Telemetry stream at 1, 5, 10 msg/s
-  - **Scenario 2** — Command burst (50 commands), latency measured via ACK timestamps
+  - **Scenario 1** — Telemetry stream at 4 msg/s and 16 msg/s (120 s)
+  - **Scenario 2** — Command round-trip (60 commands at 1/s: takeoff→lights on→land→lights off cycle)
   - **Scenario 3** — Degraded network (`tc netem` inside CSE container)
 - **Protocols implemented:** WebSocket ✅ · MQTT ✅ · HTTP ✅ · CoAP ✅
 - **Next step:** end-to-end integration test — all 4 vs real ACME CSE

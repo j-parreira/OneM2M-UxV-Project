@@ -82,7 +82,7 @@ SCHEMA = {
 
 VALID_PROTOCOLS = {"mqtt", "http", "websocket", "coap"}
 VALID_SCENARIOS = {1, 2, 3}
-S1_RATES = {1, 5, 10}  # msg/s — used when grouping S1 data by rate
+S1_RATES = {4, 16}  # msg/s — 4 = single drone, 16 = 4 drones simulated
 ```
 
 Any file that fails schema validation is logged and excluded — never silently corrupted.
@@ -175,7 +175,7 @@ plt.rcParams.update({
 | Figure | Type | Data | Priority |
 |---|---|---|---|
 | Latency distribution | Box plot (4 protocols) | Scenario 1, all rates | **Must have** |
-| Latency CDF | Line (4 protocols) | Scenario 1, 5 msg/s | **Must have** |
+| Latency CDF | Line (4 protocols) | Scenario 1, 4 msg/s + 16 msg/s | **Must have** |
 | Protocol overhead | Bar chart (4 protocols) | All scenarios | **Must have** |
 | Throughput vs rate | Line (4 protocols × 3 rates) | Scenario 1 | **Must have** |
 | Packet loss | Bar chart (4 protocols) | Scenario 2 | **Must have** |

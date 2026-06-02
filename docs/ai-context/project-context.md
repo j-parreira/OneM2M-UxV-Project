@@ -98,7 +98,7 @@ docs/          Reference documentation. Read ai-context/ before starting any sub
 | **2026-06-06** | Paper MDPI, 8–12 pp. — Mobilidade em Sistemas Computacionais (IPL Leiria) | 🔴 Hard |
 | After June 6 | Possível submissão a conferência (estrutura MDPI já adoptada — reutilizável) | — |
 
-Paper: system architecture, methodology, all 4 protocols with results (≥30 runs × 4 protocols × 3 S1 rates + 4 protocols S2). Language: English.
+Paper: system architecture, methodology, all 4 protocols with results (10 runs × 4 protocols × 2 S1 rates + 4 protocols S2). Language: English.
 Paper structure: MDPI template (IMRaD) — Introduction, Related Work, System Design, Methodology, Results, Discussion, Conclusion.
 
 ---
@@ -146,7 +146,7 @@ the CSE IP via a field in the main screen.
 ### Remaining (priority order for June 6)
 
 1. **End-to-end integration test** — MQTT first, then HTTP/CoAP against real ACME CSE
-2. **Benchmark runs** — all 4 protocols, Scenarios 1 & 2, ≥30 runs each
+2. **Benchmark runs** — all 4 protocols, Scenarios 1 & 2, 10 runs each
 3. **`src/analysis/`** — statistics + figures (Kruskal-Wallis, Dunn, Cliff's delta)
 4. **Paper MDPI** writing (8–12 pp., template MDPI, IMRaD)
 
@@ -168,16 +168,16 @@ Full end-to-end workflow for one complete benchmark run:
    # Streamlit: test command → verify drone responds + ACK arrives
 
 3. SCENARIO 1 — Telemetry stream
-   # For each rate (1/5/10 msg/s), for each protocol (WS/MQTT/HTTP/CoAP):
-   Streamlit sends: {"command": "setTelemetryRate", "intervalMs": 200}
+   # For each rate (4/16 msg/s), for each protocol (WS/MQTT/HTTP/CoAP):
+   Streamlit sends: {"command": "setTelemetryRate", "intervalMs": 250}  # or 62 for 16 msg/s
    Streamlit subscribes to /cse-in/uxv/telemetry → logs seq, t_send_ms, t_receive
-   Run 5 minutes → save data/raw/websocket_s1_<date>_run<N>.csv
+   Run 2 minutes → save data/raw/websocket_s1_r4_<date>_run<N>.csv
 
-4. SCENARIO 2 — Command burst
+4. SCENARIO 2 — Command round-trip
    # For each protocol:
-   Streamlit sends 50 × {"command": "takeoff", "seq_cmd": N, "t_cmd_ms": T}
+   Streamlit sends 60 × cycle[takeoff, identify(on), land, identify(off)] at ~1 cmd/s
    Android ACKs each → Streamlit logs t_recv_ms - t_cmd_ms per command
-   Run until 50 ACKs or 60s timeout → save data/raw/websocket_s2_<date>_run<N>.csv
+   Run until 60 ACKs or 600s timeout → save data/raw/websocket_s2_<date>_run<N>.csv
 
 5. SCENARIO 3 — Degraded network (after June 6)
    docker exec acme-cse tc qdisc add dev eth0 root netem loss 5%

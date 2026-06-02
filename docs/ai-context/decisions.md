@@ -50,7 +50,7 @@ After testing against the real CSE, the following choices were made:
 |---|---|---|
 | Protocol abstraction | `ProtocolClient` interface | 4 protocols need same interface; decouples transport from flight/telemetry logic |
 | OneM2M session layer | `OneM2MSession` (wraps transport) | Protocol-agnostic; all 4 transports share the same AE registration sequence |
-| Telemetry rate | Configurable via command `setTelemetryRate` | Scenario 1 requires 1/5/10 msg/s; hardcoded 250ms insufficient |
+| Telemetry rate | Configurable via command `setTelemetryRate` | Scenario 1 uses 4 msg/s (250 ms) and 16 msg/s (62 ms, 4-drone load); hardcoded rate insufficient |
 | Command ACK | CIN in `/cse-in/uxv/ack` with timestamps | Enables device-to-device latency measurement (Scenario 2) without NTP |
 | Packet loss detection | `seq` counter in telemetry JSON | Monotonic counter; gaps = lost messages; no server-side tracking needed |
 
@@ -73,8 +73,8 @@ Priority order given the 2026-06-06 hard deadline:
 ## Experimental Design
 
 - Each protocol tested in identical network conditions (same LAN, controlled environment)
-- Minimum 30 runs per protocol × scenario for statistical validity
-- Scenarios: (1) idle telemetry stream (1/5/10 msg/s), (2) command burst (50 cmds),
+- 10 runs per protocol × scenario for statistical validity
+- Scenarios: (1) telemetry stream (4/16 msg/s, 120 s), (2) command round-trip (60 cmds at 1/s, 4-cmd cycle),
   (3) degraded network (2%, 5%, 10% packet loss via tc netem)
 - Random seeds logged for any stochastic elements
 - Statistical test: Kruskal-Wallis H (non-parametric) + Dunn's post-hoc + Cliff's delta

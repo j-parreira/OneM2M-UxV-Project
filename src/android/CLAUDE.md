@@ -200,7 +200,7 @@ connect(host, 8180, serialNumber)
 | End-to-end MQTT test | Testar registo AE + notificações vs ACME CSE real |
 | End-to-end HTTP test | Confirmado OK (2026-05-25); verificar se Streamlit recebe telemetria |
 | End-to-end CoAP test | Opções CoAP corrigidas (2026-05-31) — testar contra ACME CSE real |
-| Benchmark runs (S1, S2) | ≥30 runs × 4 protocolos |
+| Benchmark runs (S1, S2) | 10 runs × 4 protocolos × 2 S1 rates (4/16 msg/s) |
 
 ---
 

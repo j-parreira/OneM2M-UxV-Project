@@ -2,7 +2,7 @@
 
 > Reference for benchmark execution and per-protocol configuration.
 > Reflects the empirically verified ACME CSE v2025.11 implementation.
-> Last updated: 2026-06-01.
+> Last updated: 2026-06-02.
 
 ---
 
@@ -19,19 +19,19 @@ Drone hovers at a fixed position. The Android app pushes telemetry at a fixed ra
 {"command": "setTelemetryRate", "intervalMs": 200}
 ```
 
-**Rates tested:** 1 msg/s (1000 ms), 5 msg/s (200 ms), 10 msg/s (100 ms)
+**Rates tested:** 4 msg/s (250 ms — single drone load), 16 msg/s (62 ms — 4 drones simulated)
 
 **Metrics:** `latency_ms` (NTP-dependent), `payload_bytes`, `header_bytes`, `seq` gaps (packet loss)  
-**Duration:** 5 minutes per rate per protocol  
-**Repetitions:** ≥30 runs per (rate × protocol) combination
+**Duration:** 2 minutes (120 s) per rate per protocol  
+**Repetitions:** 10 runs per (rate × protocol) combination
 
-### Scenario 2 — Command Burst
+### Scenario 2 — Command Round-Trip
 
-Streamlit sends 50 command CINs in rapid succession to `cse-in/uxv/commands`. The Android app receives each via subscription notification, dispatches to DJI SDK, and sends an ACK CIN to `cse-in/uxv/ack` with timestamps.
+Streamlit sends 60 commands at ~1 cmd/s (1000 ms inter-command delay after ACK) to `cse-in/uxv/commands` in a fixed 4-command cycle: **takeoff → identify(on) → land → identify(off)**, repeating 15×. The Android app receives each via subscription notification, dispatches to DJI SDK, and sends an ACK CIN to `cse-in/uxv/ack` with timestamps.
 
 **Metrics:** `cin_create_ms` (monotonic, Streamlit-only), `latency_ms` (`t_recv_ms − t_cmd_ms`, NTP-dependent), `delivered` (ACK within 10 s)  
-**Duration:** until 50 ACKs or 60 s timeout  
-**Repetitions:** ≥30 runs per protocol
+**Duration:** ~60–90 s for 60 commands; 600 s wall-clock cap  
+**Repetitions:** 10 runs per protocol
 
 ### Scenario 3 — Degraded Network (after June 6 deadline)
 
@@ -172,7 +172,7 @@ Library:        aiocoap 0.4.8 (Python) / Californium 2.7.4 (Android)
 ### Per-message CSV
 
 Filename format:
-- Scenario 1: `<protocol>_s1_r<rate>_<YYYYMMDD>_run<NNN>.csv` (e.g. `mqtt_s1_r5_20260601_run001.csv`)
+- Scenario 1: `<protocol>_s1_r<rate>_<YYYYMMDD>_run<NNN>.csv` (e.g. `mqtt_s1_r4_20260602_run001.csv`)
 - Scenario 2: `<protocol>_s2_<YYYYMMDD>_run<NNN>.csv` (e.g. `http_s2_20260601_run001.csv`)
 
 | Column | Type | Description | Source |
@@ -196,19 +196,19 @@ Filename format:
 
 ```json
 {
-  "run_id": "websocket_s1_r5_20260601_run001",
+  "run_id": "websocket_s1_r4_20260602_run001",
   "protocol": "websocket",
   "scenario": 1,
-  "rate_msg_s": 5,
-  "duration_s": 300,
+  "rate_msg_s": 4,
+  "duration_s": 120,
   "cse_version": "2025.11",
   "android_app_version": "4.0",
   "drone_model": "DJI Mavic 2 Enterprise Advanced",
   "start_timestamp_ms": 1748000000000,
-  "created_at_utc": "2026-06-01T10:00:00Z",
+  "created_at_utc": "2026-06-02T10:00:00Z",
   "notes": "Battery 82%, NTP synced, WiFi Private",
-  "n_records": 1500,
-  "run_config": { "rate_msg_s": 5, "duration_s": 300, "protocol": "websocket", "scenario": 1 },
+  "n_records": 480,
+  "run_config": { "rate_msg_s": 4, "duration_s": 120, "protocol": "websocket", "scenario": 1 },
   "software_versions": { "python": "3.12.x", "streamlit": "1.45.1" }
 }
 ```

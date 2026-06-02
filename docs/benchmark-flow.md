@@ -94,7 +94,7 @@ If ACK is not received:
 
 ## 3. Scenario 1 — Telemetry Stream
 
-**For each: protocol ∈ {WebSocket, MQTT, HTTP, CoAP} × rate ∈ {1, 5, 10} msg/s**
+**For each: protocol ∈ {WebSocket, MQTT, HTTP, CoAP} × rate ∈ {4, 16} msg/s**
 
 ### 3.1 Select protocol in Streamlit
 
@@ -104,18 +104,18 @@ Protocol selector → choose protocol under test → CSE path and client configu
 
 Streamlit sends via the current protocol:
 ```json
-{"command": "setTelemetryRate", "intervalMs": 200}
+{"command": "setTelemetryRate", "intervalMs": 250}
 ```
-Android status field confirms: `"Telemetry rate: 5 msg/s (200ms)"`
+Android status field confirms: `"Telemetry rate: 4 msg/s (250ms)"`
 
 ### 3.3 Configure Streamlit benchmark run
 
 ```
 Protocol:  WebSocket
 Scenario:  1
-Rate:      5 msg/s
-Duration:  300 s
-Run ID:    websocket_s1_20260520_run001
+Rate:      4 msg/s  (or 16 msg/s for 4-drone load simulation)
+Duration:  120 s
+Run ID:    websocket_s1_r4_20260602_run001
 ```
 
 ### 3.4 Run and collect
@@ -127,9 +127,9 @@ Run ID:    websocket_s1_20260520_run001
    - `t_send_ms` (from CIN.con)
    - `latency_ms = timestamp_ms - t_send_ms` (NTP-dependent)
    - `payload_bytes`, `header_bytes`
-3. After 300 s, Streamlit saves:
-   - `data/raw/websocket_s1_20260520_run001.csv`
-   - `data/raw/websocket_s1_20260520_run001.json` (metadata sidecar)
+3. After 120 s, Streamlit saves:
+   - `data/raw/websocket_s1_r4_20260602_run001.csv`
+   - `data/raw/websocket_s1_r4_20260602_run001.json` (metadata sidecar)
 
 ### 3.5 Metrics computed per run
 
@@ -141,7 +141,7 @@ Run ID:    websocket_s1_20260520_run001
 | Overhead | `mean(header_bytes / (header_bytes + payload_bytes)) × 100` |
 | Jitter | `std(latency_ms)` |
 
-**Repeat 30 times** per (protocol, rate) combination. Reset telemetry between runs.
+**Repeat 10 times** per (protocol, rate) combination. Reset telemetry between runs.
 
 ---
 
@@ -152,19 +152,22 @@ Run ID:    websocket_s1_20260520_run001
 ### 4.1 Configure
 
 ```
-Protocol:  WebSocket
-Scenario:  2
-Commands:  50
-Timeout:   60 s
+Protocol:              WebSocket
+Scenario:              2
+Commands:              60
+Inter-command delay:   1000 ms  (after ACK, ~1 cmd/s)
+Run timeout:           600 s
 ```
 
 ### 4.2 Run
 
-Streamlit sends 50 commands in rapid succession via the current protocol:
+Streamlit sends 60 commands at ~1 cmd/s in a repeating 4-command cycle:
 ```json
-{"command": "takeoff", "seq_cmd": 1, "t_cmd_ms": 1748000000000}
-{"command": "land",    "seq_cmd": 2, "t_cmd_ms": 1748000000500}
-...
+{"command": "takeoff",  "seq_cmd": 1, "t_cmd_ms": 1748000000000}
+{"command": "identify", "state": true,  "seq_cmd": 2, "t_cmd_ms": 1748000001200}
+{"command": "land",     "seq_cmd": 3, "t_cmd_ms": 1748000002400}
+{"command": "identify", "state": false, "seq_cmd": 4, "t_cmd_ms": 1748000003600}
+...  (cycle repeats 15×)
 ```
 
 For each command, Streamlit waits for ACK CIN at `/cse-in/uxv/ack`:
@@ -172,14 +175,14 @@ For each command, Streamlit waits for ACK CIN at `/cse-in/uxv/ack`:
 {"command": "takeoff", "seq_cmd": 1, "t_cmd_ms": ..., "t_recv_ms": ..., "t_exec_ms": ...}
 ```
 
-Latency = `t_recv_ms - t_cmd_ms` (device-to-device, no NTP dependency)
+Latency = `t_recv_ms - t_cmd_ms` (NTP-dependent: Streamlit and Android clocks)  
+`cin_create_ms` = Streamlit→CSE round-trip (monotonic, no NTP dependency)
 
 ### 4.3 Data saved
 
-`data/raw/websocket_s2_20260520_run001.csv` with one row per command.
+`data/raw/websocket_s2_20260602_run001.csv` with one row per command.
 
-**Repeat 30 times.** Commands may be a rotating set (takeoff/land alternating, setZoom, etc.)
-to avoid drone state conflicts.
+**Repeat 10 times** per protocol.
 
 ---
 
@@ -239,7 +242,7 @@ python scripts/03_statistical_tests.py
 # Step 4: Publication figures
 jupyter lab notebooks/04_paper_figures.ipynb
 # → Latency box plot (4 protocols)
-# → Latency CDF (4 protocols at 5 msg/s)
+# → Latency CDF (4 protocols at 4 msg/s and 16 msg/s)
 # → Protocol overhead bar chart
 # → Throughput vs rate line chart
 # → Packet loss bar chart
@@ -281,7 +284,7 @@ If notifications stopped working after a code change, check the `registerAE()` b
 
 Before including a run in the paper analysis:
 
-- [ ] ≥ 30 runs per (protocol, scenario, rate) combination
+- [ ] ≥ 10 runs per (protocol, scenario, rate) combination
 - [ ] No more than 5% of runs flagged as anomalous by `01_load_validate.py`
 - [ ] Battery > 30% throughout each run (check drone battery logs)
 - [ ] No CSE restarts during run (check Docker logs)

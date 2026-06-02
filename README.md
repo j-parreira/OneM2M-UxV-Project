@@ -147,7 +147,7 @@ Open `src/android/` in Android Studio. Requires DJI SDK v4 and a valid DJI devel
 | `src/frontend/` | ✅ Complete | All 4 protocol clients; S1 & S2 orchestrators; CSV logger; results viewer |
 | `src/analysis/` | 🔜 Not started | Pending benchmark data collection |
 
-**Next step:** benchmark runs — Scenarios 1 & 2, ≥30 runs × 4 protocols.  
+**Next step:** benchmark runs — Scenarios 1 & 2, 10 runs × 4 protocols × 2 S1 rates.  
 **Deadline:** 2026-06-06 (paper MDPI, 8–12 pp., Mobilidade em Sistemas Computacionais)
 
 ## Key Technical Documents

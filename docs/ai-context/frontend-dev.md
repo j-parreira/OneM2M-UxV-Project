@@ -137,9 +137,9 @@ Runs one complete experiment run and returns a list of metric records.
 class RunConfig:
     protocol: str           # mqtt | http | websocket | coap
     scenario: int           # 1 | 2 | 3
-    rate_msg_s: int | None  # Scenario 1 only (1, 5, 10)
-    n_commands: int         # Scenario 2: 50; Scenario 1: derived from rate × duration
-    duration_s: int         # Scenario 1 & 3: 300 (5 min)
+    rate_msg_s: int | None  # Scenario 1 only (4 or 16 msg/s)
+    n_commands: int         # Scenario 2: 60; Scenario 1: derived from rate × duration
+    duration_s: int         # Scenario 1: 120 s (2 min)
     run_id: str             # generated: <protocol>_s<scenario>_<YYYYMMDD>_run<N>
 ```
 
