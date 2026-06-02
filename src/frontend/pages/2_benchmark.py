@@ -42,13 +42,14 @@ with col_s1:
         "subscription notification and records arrival timestamp.\n\n"
         "**Measures:** delivery latency (`timestamp_ms − t_send_ms`), packet loss "
         "(gaps in `seq`), protocol overhead (`header_bytes / total_bytes`). "
-        "Rates: 1, 5, 10 msg/s · Duration: 5 min."
+        "Rates: **4 msg/s** (1 drone) · **16 msg/s** (4 drones simulated) · Duration: 2 min."
     )
 
 with col_s2:
     st.info(
         "**Scenario 2 — Command Round-Trip**\n\n"
-        "Dashboard sends 50 command CINs in rapid succession to `cse-in/uxv/commands`. "
+        "Dashboard sends 60 commands at 1/s to `cse-in/uxv/commands` in a fixed cycle: "
+        "**takeoff → lights on → land → lights off** (repeating). "
         "Android receives each via subscription notification, dispatches to DJI SDK, "
         "and sends an ACK CIN to `cse-in/uxv/ack` with timestamps.\n\n"
         "**Measures:** CIN create RTT (`cin_create_ms`, Streamlit→CSE, NTP-free); "
@@ -72,20 +73,29 @@ with col1:
 
 with col2:
     if scenario == 1:
-        rate_msg_s = st.selectbox("Telemetry rate", [1, 5, 10], format_func=lambda r: f"{r} msg/s")
-        duration_s = st.number_input("Duration (s)", min_value=10, max_value=600, value=300, step=10)
+        rate_msg_s = st.selectbox("Telemetry rate", [4, 16], format_func=lambda r: f"{r} msg/s")
+        duration_s = st.number_input("Duration (s)", min_value=10, max_value=600, value=120, step=10)
         n_commands = (rate_msg_s or 1) * duration_s
         ack_run_timeout_s = None  # unused in S1
+        inter_command_delay_ms = 0  # unused in S1
     else:
         rate_msg_s = None
-        n_commands = st.number_input("Commands to send", min_value=1, max_value=200, value=50)
+        n_commands = st.number_input("Commands to send", min_value=1, max_value=200, value=60)
+        inter_command_delay_ms = st.number_input(
+            "Inter-command delay (ms)",
+            min_value=0,
+            max_value=5000,
+            value=1000,
+            step=100,
+            help="Sleep between commands (after ACK). 1000 ms → ~1 cmd/s. 0 = maximum burst.",
+        )
         ack_run_timeout_s = st.number_input(
             "Run timeout (s)",
             min_value=10,
             max_value=600,
             value=600,
             step=10,
-            help="Wall-clock cap for the whole burst. 50 cmds × 10 s/ACK = 500 s worst case; 600 s is a safe ceiling.",
+            help="Wall-clock cap for the whole burst. 60 cmds × (10 s/ACK + 1 s delay) = 660 s worst case; 600 s is a safe ceiling for normal conditions.",
         )
         duration_s = int(ack_run_timeout_s)  # used only for the sidecar; not a hard deadline in S2
 
@@ -141,6 +151,7 @@ with run_col:
             n_commands=int(n_commands),
             duration_s=int(duration_s),
             ack_run_timeout_s=int(ack_run_timeout_s) if ack_run_timeout_s is not None else 600,
+            inter_command_delay_ms=int(inter_command_delay_ms),
             notes=notes,
         )
         st.session_state.bench_stop_event = threading.Event()

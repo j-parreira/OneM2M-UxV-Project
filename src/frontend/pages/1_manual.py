@@ -178,7 +178,7 @@ with cols[-1]:
 st.subheader("Telemetry Rate Control")
 rate_col, send_col = st.columns([2, 1])
 with rate_col:
-    rate = st.selectbox("Rate", [1, 5, 10], format_func=lambda r: f"{r} msg/s", index=1)
+    rate = st.selectbox("Rate", [4, 16], format_func=lambda r: f"{r} msg/s", index=0)
 with send_col:
     if st.button("Set Rate", disabled=client is None, use_container_width=True):
         interval_ms = 1000 // rate

@@ -37,18 +37,17 @@ class RunConfig:
     """
     protocol: str           # mqtt | http | websocket | coap
     scenario: int           # 1 | 2 | 3
-    rate_msg_s: Optional[int]   # Scenario 1 only: 1, 5, or 10 msg/s
-    n_commands: int         # Scenario 2: 50; Scenario 1: rate × duration_s
-    duration_s: int         # Scenario 1 & 3: 300 s; Scenario 2: from n_commands
+    rate_msg_s: Optional[int]   # Scenario 1 only: 4 or 16 msg/s
+    n_commands: int         # Scenario 2: 60; Scenario 1: rate × duration_s
+    duration_s: int         # Scenario 1: 120 s; Scenario 2: from ack_run_timeout_s
     # Scenario 2: wall-clock cap for the entire burst.
-    # Budget = n_commands × (per_cmd_ack_timeout + send_latency).
-    # 50 cmds × 10 s/cmd + margin = 600 s is a safe ceiling.
+    # Budget = n_commands × (per_cmd_ack_timeout + inter_command_delay_s).
+    # 60 cmds × (10 s + 1 s) = 660 s worst case; 600 s is a safe ceiling for normal conditions.
     ack_run_timeout_s: int = 600
-    # Scenario 2: delay between consecutive commands (ms). 0 = maximum burst.
-    # A small delay (200–500 ms) lets the CSE deliver notifications to Android
-    # before the next command arrives, reducing notification backlog and improving
-    # delivery reliability at the cost of total burst duration.
-    inter_command_delay_ms: int = 0
+    # Scenario 2: delay between consecutive commands (ms), applied after each ACK.
+    # 1000 ms ≈ 1 cmd/s, matching the benchmark protocol (60 cmds over ~60-90 s).
+    # 0 = maximum burst (used only for debugging/stress tests).
+    inter_command_delay_ms: int = 1000
     run_id: str = ""        # auto-generated if empty
     notes: str = ""         # operator notes for the JSON sidecar
 
@@ -264,19 +263,29 @@ def _run_scenario_2(
     stop_event: threading.Event,
     progress_cb: Optional[Callable],
 ) -> tuple[list[MetricRecord], int]:
-    """Scenario 2: send n_commands commands and collect ACKs.
+    """Scenario 2: send n_commands commands at a fixed inter-command delay.
 
-    Sends commands in a rotating set (takeoff/land alternating) to avoid
-    drone state conflicts. Waits for each ACK before sending the next command.
+    Commands rotate through a 4-step cycle:
+      1. takeoff
+      2. identify (state=True  — lights on)
+      3. land
+      4. identify (state=False — lights off)
 
-    Latency = t_recv_ms - t_cmd_ms.
-    NOTE: t_cmd_ms is set by Streamlit (dev machine clock) and t_recv_ms by
-    Android (RC clock). Both are wall-clock times and NTP-dependent in practice,
-    despite the "device-to-device" description in the docs. For the paper,
-    note that both devices are on the same LAN and NTP-synced.
+    Waits for the ACK of each command before sleeping inter_command_delay_ms
+    and sending the next. The cycle repeats for the full n_commands burst.
+
+    Latency = t_recv_ms - t_cmd_ms (NTP-dependent: Streamlit and Android clocks).
     """
     records: list[MetricRecord] = []
     n_delivered = 0
+
+    # 4-command repeating cycle: stateless and safe to repeat indefinitely.
+    _CMD_CYCLE = [
+        {"command": "takeoff"},
+        {"command": "identify", "state": True},    # lights on
+        {"command": "land"},
+        {"command": "identify", "state": False},   # lights off
+    ]
 
     ack_queue: queue.Queue = queue.Queue()
 
@@ -301,12 +310,10 @@ def _run_scenario_2(
                 )
                 break
 
-            # Alternate identify state (false/true) — simple, stateless, safe to repeat.
-            state = (seq_cmd % 2 == 0)
+            base_cmd = _CMD_CYCLE[(seq_cmd - 1) % len(_CMD_CYCLE)]
             t_cmd_ms = int(time.time() * 1000)
             payload = {
-                "command": "identify",
-                "state": state,
+                **base_cmd,
                 "seq_cmd": seq_cmd,
                 "t_cmd_ms": t_cmd_ms,
             }
@@ -416,5 +423,9 @@ def _run_scenario_2(
 
 
 def _rate_to_interval_ms(rate_msg_s: int) -> int:
-    """Convert msg/s rate to intervalMs for the setTelemetryRate command."""
-    return max(100, 1000 // rate_msg_s)
+    """Convert msg/s rate to intervalMs for the setTelemetryRate command.
+
+    Floor at 50 ms (20 msg/s) — below that, Android SDK scheduling jitter
+    makes the rate unreliable. Benchmark uses 4 msg/s (250 ms) and 16 msg/s (62 ms).
+    """
+    return max(50, 1000 // rate_msg_s)
