@@ -84,10 +84,10 @@ class HttpClient(ProtocolClient):
             _SUB_ACK_RN,
         )
         if self._tel_sub_ri is None:
-            print("[HTTP] WARNING: telemetry subscription ri not captured", flush=True)
+            print(f"[{time.strftime('%H:%M:%S')}][HTTP] WARNING: telemetry subscription ri not captured", flush=True)
         if self._ack_sub_ri is None:
-            print("[HTTP] WARNING: ack subscription ri not captured", flush=True)
-        print(f"[HTTP] tel_sub_ri={self._tel_sub_ri}  ack_sub_ri={self._ack_sub_ri}", flush=True)
+            print(f"[{time.strftime('%H:%M:%S')}][HTTP] WARNING: ack subscription ri not captured", flush=True)
+        print(f"[{time.strftime('%H:%M:%S')}][HTTP] tel_sub_ri={self._tel_sub_ri}  ack_sub_ri={self._ack_sub_ri}", flush=True)
 
     def send_command(self, payload: dict) -> tuple[float | None, bool]:
         """POST a command CIN to /cse-in/uxv/commands."""
@@ -231,12 +231,12 @@ class HttpClient(ProtocolClient):
                 timeout=_REQUEST_TIMEOUT_S,
             )
             rsc = resp.headers.get("X-M2M-RSC")
-            print(f"[HTTP] subscribe {container_url}/{rn} status={resp.status_code} rsc={rsc}", flush=True)
+            print(f"[{time.strftime('%H:%M:%S')}][HTTP] subscribe {container_url}/{rn} status={resp.status_code} rsc={rsc}", flush=True)
             if resp.status_code == 201:
                 ri = resp.json().get("m2m:sub", {}).get("ri")
                 return ri
         except requests.RequestException as exc:
-            print(f"[HTTP] subscribe {container_url}/{rn} error: {exc!r}", flush=True)
+            print(f"[{time.strftime('%H:%M:%S')}][HTTP] subscribe {container_url}/{rn} error: {exc!r}", flush=True)
         return None
 
     def _start_callback_server(self) -> None:
@@ -290,7 +290,7 @@ class HttpClient(ProtocolClient):
 
         # Subscription verification request — HTTP 200 already sent by do_POST; nothing else needed.
         if sgn.get("vrq"):
-            print(f"[HTTP] vrq sur={sur!r} — 200 already sent", flush=True)
+            print(f"[{time.strftime('%H:%M:%S')}][HTTP] vrq sur={sur!r} — 200 already sent", flush=True)
             return
 
         nev = sgn.get("nev", {})
@@ -305,18 +305,19 @@ class HttpClient(ProtocolClient):
 
         is_tel = self._tel_sub_ri is not None and self._tel_sub_ri in sur
         is_ack = self._ack_sub_ri is not None and self._ack_sub_ri in sur
-        print(f"[HTTP] notify sur={sur!r} is_tel={is_tel} is_ack={is_ack}", flush=True)
+        if is_ack or (not is_tel and not is_ack):
+            print(f"[{time.strftime('%H:%M:%S')}][HTTP] notify sur={sur!r} is_tel={is_tel} is_ack={is_ack}", flush=True)
 
         if is_tel and self._telemetry_cb:
             try:
                 self._telemetry_cb(con)
             except Exception as exc:
-                print(f"[HTTP] telemetry_cb raised: {exc!r}", flush=True)
+                print(f"[{time.strftime('%H:%M:%S')}][HTTP] telemetry_cb raised: {exc!r}", flush=True)
         elif is_ack and self._ack_cb:
             try:
                 self._ack_cb(con)
             except Exception as exc:
-                print(f"[HTTP] ack_cb raised: {exc!r}", flush=True)
+                print(f"[{time.strftime('%H:%M:%S')}][HTTP] ack_cb raised: {exc!r}", flush=True)
 
     @staticmethod
     def _measure_notification_headers(handler: BaseHTTPRequestHandler) -> int:

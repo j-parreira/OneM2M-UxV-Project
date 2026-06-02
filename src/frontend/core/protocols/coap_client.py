@@ -150,10 +150,10 @@ class CoapClient(ProtocolClient):
         self._tel_sub_ri = self._ensure_subscription("cse-in/uxv/telemetry", _SUB_TEL_RN)
         self._ack_sub_ri = self._ensure_subscription("cse-in/uxv/ack", _SUB_ACK_RN)
         if self._tel_sub_ri is None:
-            print("[CoAP] WARNING: telemetry subscription ri not captured", flush=True)
+            print(f"[{time.strftime('%H:%M:%S')}][CoAP] WARNING: telemetry subscription ri not captured", flush=True)
         if self._ack_sub_ri is None:
-            print("[CoAP] WARNING: ack subscription ri not captured", flush=True)
-        print(f"[CoAP] tel_sub_ri={self._tel_sub_ri}  ack_sub_ri={self._ack_sub_ri}", flush=True)
+            print(f"[{time.strftime('%H:%M:%S')}][CoAP] WARNING: ack subscription ri not captured", flush=True)
+        print(f"[{time.strftime('%H:%M:%S')}][CoAP] tel_sub_ri={self._tel_sub_ri}  ack_sub_ri={self._ack_sub_ri}", flush=True)
 
     def send_command(self, payload: dict) -> tuple[float | None, bool]:
         """POST a command CIN to /cse-in/uxv/commands via CoAP CON."""
@@ -171,10 +171,10 @@ class CoapClient(ProtocolClient):
             t_end = time.monotonic_ns()
             latency_ms = (t_end - t_start) / 1_000_000
             delivered = rsc == 2001  # oneM2M CREATED
-            print(f"[CoAP] send_command rsc={rsc} latency={latency_ms:.1f}ms delivered={delivered}", flush=True)
+            print(f"[{time.strftime('%H:%M:%S')}][CoAP] send_command rsc={rsc} latency={latency_ms:.1f}ms delivered={delivered}", flush=True)
             return latency_ms, delivered
         except Exception as exc:
-            print(f"[CoAP] send_command FAILED: {exc!r}", flush=True)
+            print(f"[{time.strftime('%H:%M:%S')}][CoAP] send_command FAILED: {exc!r}", flush=True)
             return None, False
 
     def subscribe_telemetry(self, callback: Callable[[dict], None]) -> None:
@@ -379,7 +379,7 @@ class CoapClient(ProtocolClient):
         try:
             rsc, resp_payload = future.result(timeout=_REQUEST_TIMEOUT_S)
             print(
-                f"[CoAP] subscribe {container_path}/{rn} rsc={rsc} "
+                f"[{time.strftime('%H:%M:%S')}][CoAP] subscribe {container_path}/{rn} rsc={rsc} "
                 f"nu={self._config.callback_http_docker_url}",
                 flush=True,
             )
@@ -394,12 +394,12 @@ class CoapClient(ProtocolClient):
                 # Conflict — DELETE timed out, old subscription still exists.
                 # GET it to retrieve its ri so notifications can be matched.
                 print(
-                    f"[CoAP] subscribe conflict rsc={rsc} — retrieving existing ri",
+                    f"[{time.strftime('%H:%M:%S')}][CoAP] subscribe conflict rsc={rsc} — retrieving existing ri",
                     flush=True,
                 )
                 return self._get_sub_ri(container_path, rn)
         except Exception as exc:
-            print(f"[CoAP] subscribe {container_path}/{rn} error: {exc!r}", flush=True)
+            print(f"[{time.strftime('%H:%M:%S')}][CoAP] subscribe {container_path}/{rn} error: {exc!r}", flush=True)
         return None
 
     def _get_sub_ri(self, container_path: str, rn: str) -> Optional[str]:
@@ -430,10 +430,10 @@ class CoapClient(ProtocolClient):
             if rsc in (2000, 2001) and payload:
                 body = json.loads(payload.decode())
                 ri = body.get("m2m:sub", {}).get("ri")
-                print(f"[CoAP] existing sub ri={ri}", flush=True)
+                print(f"[{time.strftime('%H:%M:%S')}][CoAP] existing sub ri={ri}", flush=True)
                 return ri
         except Exception as exc:
-            print(f"[CoAP] get existing sub error: {exc!r}", flush=True)
+            print(f"[{time.strftime('%H:%M:%S')}][CoAP] get existing sub error: {exc!r}", flush=True)
         return None
 
     async def _async_get(self, uri: str) -> tuple[int, bytes]:
@@ -531,7 +531,7 @@ class CoapClient(ProtocolClient):
 
         # Subscription verification request — HTTP 200 already sent; skip.
         if sgn.get("vrq"):
-            print(f"[CoAP] vrq sur={sur!r} — 200 already sent", flush=True)
+            print(f"[{time.strftime('%H:%M:%S')}][CoAP] vrq sur={sur!r} — 200 already sent", flush=True)
             return
 
         nev = sgn.get("nev", {})
@@ -546,15 +546,16 @@ class CoapClient(ProtocolClient):
 
         is_tel = self._tel_sub_ri is not None and self._tel_sub_ri in sur
         is_ack = self._ack_sub_ri is not None and self._ack_sub_ri in sur
-        print(f"[CoAP] notify sur={sur!r} is_tel={is_tel} is_ack={is_ack}", flush=True)
+        if is_ack or (not is_tel and not is_ack):
+            print(f"[{time.strftime('%H:%M:%S')}][CoAP] notify sur={sur!r} is_tel={is_tel} is_ack={is_ack}", flush=True)
 
         if is_tel and self._telemetry_cb:
             try:
                 self._telemetry_cb(con)
             except Exception as exc:
-                print(f"[CoAP] telemetry_cb raised: {exc!r}", flush=True)
+                print(f"[{time.strftime('%H:%M:%S')}][CoAP] telemetry_cb raised: {exc!r}", flush=True)
         elif is_ack and self._ack_cb:
             try:
                 self._ack_cb(con)
             except Exception as exc:
-                print(f"[CoAP] ack_cb raised: {exc!r}", flush=True)
+                print(f"[{time.strftime('%H:%M:%S')}][CoAP] ack_cb raised: {exc!r}", flush=True)

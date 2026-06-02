@@ -4,7 +4,7 @@ Runs a complete benchmark scenario via the configured protocol, logs metrics
 to data/raw/, and shows live progress. Supports graceful stop mid-run.
 
 One run = one CSV + one JSON sidecar. Runs are NOT repeatable via this page
-in a loop — run it manually 30 times (or script via CLI) for the 30-repetition
+in a loop — run it manually 10 times (or script via CLI) for the 10-repetition
 requirement in the methodology.
 
 See docs/benchmark-flow.md for the full experimental workflow.
@@ -83,9 +83,9 @@ with col2:
             "Run timeout (s)",
             min_value=10,
             max_value=600,
-            value=60,
+            value=600,
             step=10,
-            help="Wall-clock cap for the whole burst. Prevents a full 10 s/ACK wait × n_commands worst case.",
+            help="Wall-clock cap for the whole burst. 50 cmds × 10 s/ACK = 500 s worst case; 600 s is a safe ceiling.",
         )
         duration_s = int(ack_run_timeout_s)  # used only for the sidecar; not a hard deadline in S2
 
@@ -140,7 +140,7 @@ with run_col:
             rate_msg_s=rate_msg_s,
             n_commands=int(n_commands),
             duration_s=int(duration_s),
-            ack_run_timeout_s=int(ack_run_timeout_s) if ack_run_timeout_s is not None else 60,
+            ack_run_timeout_s=int(ack_run_timeout_s) if ack_run_timeout_s is not None else 600,
             notes=notes,
         )
         st.session_state.bench_stop_event = threading.Event()

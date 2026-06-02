@@ -102,10 +102,10 @@ class WebSocketClient(ProtocolClient):
         self._tel_sub_ri = self._ensure_subscription("cse-in/uxv/telemetry", _SUB_TEL_RN)
         self._ack_sub_ri = self._ensure_subscription("cse-in/uxv/ack", _SUB_ACK_RN)
         if self._tel_sub_ri is None:
-            print("[WS] WARNING: telemetry subscription failed — Android container may not exist yet. Reconnect after Android registers.", flush=True)
+            print(f"[{time.strftime('%H:%M:%S')}][WS] WARNING: telemetry subscription failed — Android container may not exist yet. Reconnect after Android registers.", flush=True)
         if self._ack_sub_ri is None:
-            print("[WS] WARNING: ack subscription failed — Android container may not exist yet.", flush=True)
-        print(f"[WS] tel_sub_ri={self._tel_sub_ri}  ack_sub_ri={self._ack_sub_ri}", flush=True)
+            print(f"[{time.strftime('%H:%M:%S')}][WS] WARNING: ack subscription failed — Android container may not exist yet.", flush=True)
+        print(f"[{time.strftime('%H:%M:%S')}][WS] tel_sub_ri={self._tel_sub_ri}  ack_sub_ri={self._ack_sub_ri}", flush=True)
 
     def send_command(self, payload: dict) -> tuple[float | None, bool]:
         """Post a command CIN to /cse-in/uxv/commands.
@@ -286,7 +286,9 @@ class WebSocketClient(ProtocolClient):
         # e.g. '/id-in/subBPiTR1sRvs'. Match against the ri captured at connect time.
         is_tel = self._tel_sub_ri is not None and self._tel_sub_ri in sur
         is_ack = self._ack_sub_ri is not None and self._ack_sub_ri in sur
-        print(f"[WS] notify sur={sur!r} is_tel={is_tel} is_ack={is_ack}", flush=True)
+        # Only log ACK notifications and unmatched ones — telemetry is too frequent to log every CIN.
+        if is_ack or (not is_tel and not is_ack):
+            print(f"[{time.strftime('%H:%M:%S')}][WS] notify sur={sur!r} is_tel={is_tel} is_ack={is_ack}", flush=True)
 
         try:
             con = json.loads(con_raw) if isinstance(con_raw, str) else con_raw
@@ -299,12 +301,12 @@ class WebSocketClient(ProtocolClient):
             except Exception as exc:
                 # Catch exceptions from callbacks (e.g. Streamlit session state
                 # accessed from a non-main thread) to prevent recv_loop from dying.
-                print(f"[WS] telemetry_cb raised: {exc!r}", flush=True)
+                print(f"[{time.strftime('%H:%M:%S')}][WS] telemetry_cb raised: {exc!r}", flush=True)
         elif is_ack and self._ack_cb:
             try:
                 self._ack_cb(con)
             except Exception as exc:
-                print(f"[WS] ack_cb raised: {exc!r}", flush=True)
+                print(f"[{time.strftime('%H:%M:%S')}][WS] ack_cb raised: {exc!r}", flush=True)
 
     def _register_ae(self) -> None:
         """Register Streamlit as an AE under the CSE-Base.
@@ -338,6 +340,7 @@ class WebSocketClient(ProtocolClient):
         rsc = resp.get("rsc") if resp else None
         # 2001 = Created, 4105 = Conflict (already exists),
         # 4117 = ACME CSE v2025.11 "originator already registered on active WS" — all OK.
+        print(f"[{time.strftime('%H:%M:%S')}][WS] AE register rsc={rsc}", flush=True)
         if rsc not in (2001, 4105, 4117):
             raise RuntimeError(f"AE registration failed: rsc={rsc}, resp={resp}")
         # 4105/4117: AE already exists from a prior session (e.g. previous MQTT run).
@@ -370,11 +373,11 @@ class WebSocketClient(ProtocolClient):
             resp = self._send_request(req, timeout=5.0)
             rsc = resp.get("rsc") if resp else None
             if rsc == 2004:
-                _log.debug("[WS] Updated AE poa to %s", self._config.cse_ws_url)
+                print(f"[{time.strftime('%H:%M:%S')}][WS] AE poa updated to {self._config.cse_ws_url}", flush=True)
             else:
-                print(f"[WS] AE poa update returned rsc={rsc}", flush=True)
+                print(f"[{time.strftime('%H:%M:%S')}][WS] AE poa update returned rsc={rsc}", flush=True)
         except TimeoutError:
-            print("[WS] AE poa update timed out", flush=True)
+            print(f"[{time.strftime('%H:%M:%S')}][WS] AE poa update timed out", flush=True)
 
     def _ensure_subscription(self, container_path: str, rn: str) -> Optional[str]:
         """Create a SUB resource; delete and re-create if it already exists.
@@ -416,7 +419,7 @@ class WebSocketClient(ProtocolClient):
             return None
 
         rsc = resp.get("rsc") if resp else None
-        print(f"[WS] subscribe {container_path}/{rn} rsc={rsc}", flush=True)
+        print(f"[{time.strftime('%H:%M:%S')}][WS] subscribe {container_path}/{rn} rsc={rsc}", flush=True)
         if rsc == 2001:
             # Extract the auto-generated ri so we can match it in notification `sur`.
             return resp.get("pc", {}).get("m2m:sub", {}).get("ri")

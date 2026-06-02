@@ -221,7 +221,7 @@ def _run_scenario_1(
                 # Log first 3 packets per run to diagnose clock offset
                 if seq_local <= 3:
                     print(
-                        f"[S1] seq={android_seq} t_send_ms={t_send_ms} "
+                        f"[{time.strftime('%H:%M:%S')}][S1] seq={android_seq} t_send_ms={t_send_ms} "
                         f"timestamp_ms={timestamp_ms} delta={raw_delta:+.0f} ms",
                         flush=True,
                     )
@@ -295,7 +295,7 @@ def _run_scenario_2(
                 break
             if time.monotonic() >= run_deadline:
                 print(
-                    f"[S2] run timeout ({run_cfg.ack_run_timeout_s}s) reached after "
+                    f"[{time.strftime('%H:%M:%S')}][S2] run timeout ({run_cfg.ack_run_timeout_s}s) reached after "
                     f"{seq_cmd - 1}/{run_cfg.n_commands} commands — aborting burst",
                     flush=True,
                 )
@@ -359,7 +359,7 @@ def _run_scenario_2(
                         break
                     # Stale/mismatched ACK — discard and keep waiting
                     print(
-                        f"[S2] discarded stale ACK seq_cmd={candidate.get('seq_cmd')} "
+                        f"[{time.strftime('%H:%M:%S')}][S2] discarded stale ACK seq_cmd={candidate.get('seq_cmd')} "
                         f"(waiting for {seq_cmd})",
                         flush=True,
                     )

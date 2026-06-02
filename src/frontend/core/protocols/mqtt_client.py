@@ -102,15 +102,15 @@ class MqttClient(ProtocolClient):
         self._client.subscribe(_TOPIC_RESP, qos=1)
         self._client.subscribe(_TOPIC_NOTIF, qos=1)
 
-        print(f"[MQTT] connected — registering AE and subscriptions", flush=True)
+        print(f"[{time.strftime('%H:%M:%S')}][MQTT] connected — registering AE and subscriptions", flush=True)
         self._register_ae()
         self._tel_sub_ri = self._ensure_subscription("cse-in/uxv/telemetry", _SUB_TEL_RN)
         self._ack_sub_ri = self._ensure_subscription("cse-in/uxv/ack", _SUB_ACK_RN)
         if self._tel_sub_ri is None:
-            print("[MQTT] WARNING: telemetry subscription ri not captured", flush=True)
+            print(f"[{time.strftime('%H:%M:%S')}][MQTT] WARNING: telemetry subscription ri not captured", flush=True)
         if self._ack_sub_ri is None:
-            print("[MQTT] WARNING: ack subscription ri not captured", flush=True)
-        print(f"[MQTT] tel_sub_ri={self._tel_sub_ri}  ack_sub_ri={self._ack_sub_ri}", flush=True)
+            print(f"[{time.strftime('%H:%M:%S')}][MQTT] WARNING: ack subscription ri not captured", flush=True)
+        print(f"[{time.strftime('%H:%M:%S')}][MQTT] tel_sub_ri={self._tel_sub_ri}  ack_sub_ri={self._ack_sub_ri}", flush=True)
 
     def send_command(self, payload: dict) -> tuple[float | None, bool]:
         con_str = json.dumps(payload)
@@ -182,7 +182,7 @@ class MqttClient(ProtocolClient):
     # ------------------------------------------------------------------
 
     def _on_connect(self, client, userdata, flags, rc):
-        print(f"[MQTT] on_connect rc={rc}", flush=True)
+        print(f"[{time.strftime('%H:%M:%S')}][MQTT] on_connect rc={rc}", flush=True)
         if rc == 0:
             self._connected_event.set()
 
@@ -218,7 +218,7 @@ class MqttClient(ProtocolClient):
         if sgn.get("vrq"):
             rqi = msg.get("rqi", "")
             sur = sgn.get("sur", "")
-            print(f"[MQTT] vrq sur={sur!r} — ACKing on {_TOPIC_RESP}", flush=True)
+            print(f"[{time.strftime('%H:%M:%S')}][MQTT] vrq sur={sur!r} — ACKing on {_TOPIC_RESP}", flush=True)
             ack = {"rsc": 2000, "rqi": rqi, "to": _ORIGINATOR, "fr": _ORIGINATOR, "rvi": "3"}
             self._client.publish(_TOPIC_RESP, json.dumps(ack), qos=1)
             return
@@ -237,17 +237,18 @@ class MqttClient(ProtocolClient):
         # ACME CSE puts the subscription ri (e.g. /id-in/subXXX) in `sur`, not the path.
         is_tel = self._tel_sub_ri is not None and self._tel_sub_ri in sur
         is_ack = self._ack_sub_ri is not None and self._ack_sub_ri in sur
-        print(f"[MQTT] notify sur={sur!r} is_tel={is_tel} is_ack={is_ack}", flush=True)
+        if is_ack or (not is_tel and not is_ack):
+            print(f"[{time.strftime('%H:%M:%S')}][MQTT] notify sur={sur!r} is_tel={is_tel} is_ack={is_ack}", flush=True)
         if is_tel and self._telemetry_cb:
             try:
                 self._telemetry_cb(con)
             except Exception as exc:
-                print(f"[MQTT] telemetry_cb raised: {exc!r}", flush=True)
+                print(f"[{time.strftime('%H:%M:%S')}][MQTT] telemetry_cb raised: {exc!r}", flush=True)
         elif is_ack and self._ack_cb:
             try:
                 self._ack_cb(con)
             except Exception as exc:
-                print(f"[MQTT] ack_cb raised: {exc!r}", flush=True)
+                print(f"[{time.strftime('%H:%M:%S')}][MQTT] ack_cb raised: {exc!r}", flush=True)
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -306,7 +307,7 @@ class MqttClient(ProtocolClient):
         try:
             resp = self._publish_request(req, timeout=_REQUEST_TIMEOUT_S)
             rsc = resp.get("rsc") if resp else None
-            print(f"[MQTT] AE register rsc={rsc}", flush=True)
+            print(f"[{time.strftime('%H:%M:%S')}][MQTT] AE register rsc={rsc}", flush=True)
             # 4117 = ACME CSE v2025.11 "originator already registered" — treat as 4105.
             if rsc == 4105 or rsc == 4117:
                 # AE exists from a previous session — update poa to current transport.
@@ -314,7 +315,7 @@ class MqttClient(ProtocolClient):
             elif rsc != 2001:
                 raise RuntimeError(f"AE registration failed: rsc={rsc}")
         except TimeoutError:
-            print("[MQTT] AE register timed out — proceeding optimistically", flush=True)
+            print(f"[{time.strftime('%H:%M:%S')}][MQTT] AE register timed out — proceeding optimistically", flush=True)
 
     def _ensure_subscription(self, container_path: str, rn: str) -> Optional[str]:
         """Delete existing subscription (if any), create a fresh one, return its ri.
@@ -344,10 +345,10 @@ class MqttClient(ProtocolClient):
             resp = self._publish_request(req, timeout=_REQUEST_TIMEOUT_S)
             rsc = resp.get("rsc") if resp else None
             ri = resp.get("pc", {}).get("m2m:sub", {}).get("ri") if resp else None
-            print(f"[MQTT] subscribe {container_path}/{rn} rsc={rsc} ri={ri}", flush=True)
+            print(f"[{time.strftime('%H:%M:%S')}][MQTT] subscribe {container_path}/{rn} rsc={rsc} ri={ri}", flush=True)
             return ri if rsc == 2001 else None
         except TimeoutError:
-            print(f"[MQTT] subscribe {container_path}/{rn} timed out", flush=True)
+            print(f"[{time.strftime('%H:%M:%S')}][MQTT] subscribe {container_path}/{rn} timed out", flush=True)
             return None
 
     def _update_ae_poa(self) -> None:
@@ -373,9 +374,9 @@ class MqttClient(ProtocolClient):
         try:
             resp = self._publish_request(req, timeout=_REQUEST_TIMEOUT_S)
             rsc = resp.get("rsc") if resp else None
-            print(f"[MQTT] AE poa update rsc={rsc}", flush=True)
+            print(f"[{time.strftime('%H:%M:%S')}][MQTT] AE poa update rsc={rsc}", flush=True)
         except TimeoutError:
-            print("[MQTT] AE poa update timed out", flush=True)
+            print(f"[{time.strftime('%H:%M:%S')}][MQTT] AE poa update timed out", flush=True)
 
     def _delete_resource(self, resource_path: str) -> None:
         rqi = self._next_rqi()

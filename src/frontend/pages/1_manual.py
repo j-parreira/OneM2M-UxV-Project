@@ -50,7 +50,17 @@ col_status, col_connect = st.columns([3, 1])
 
 with col_status:
     if st.session_state.manual_client is not None:
-        st.success(f"Connected — {st.session_state.connected_protocol.upper()}")
+        # Detect dead recv thread — happens when a benchmark run takes over the same
+        # WS connection (same originator CStreamlit) and later disconnects.
+        _recv = getattr(st.session_state.manual_client, "_recv_thread", None)
+        _ws_dead = _recv is not None and not _recv.is_alive()
+        if _ws_dead:
+            st.warning(
+                f"Connection lost — {st.session_state.connected_protocol.upper()} receive thread stopped. "
+                "Click **Disconnect** then **Connect** to restore."
+            )
+        else:
+            st.success(f"Connected — {st.session_state.connected_protocol.upper()}")
     else:
         st.error("Not connected")
 
@@ -112,7 +122,12 @@ st.divider()
 
 st.subheader("Commands")
 
+# client is None if not connected; also treat as None if recv thread has died.
 client: Optional = st.session_state.manual_client
+if client is not None:
+    _recv = getattr(client, "_recv_thread", None)
+    if _recv is not None and not _recv.is_alive():
+        client = None  # disable command buttons — connection is dead
 
 # Each tuple: (label, base payload dict).
 # seq_cmd and t_cmd_ms are injected at send time from the session counter.
