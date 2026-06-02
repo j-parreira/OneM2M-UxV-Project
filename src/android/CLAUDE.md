@@ -158,6 +158,7 @@ connect(host, 8180, serialNumber)
 {"command": "gpsInput", "lat": 39.933, "lng": -8.892}
 {"command": "perform360"}
 {"command": "identify", "state": true}
+{"command": "ping"}
 {"command": "gimbalAngle", "pitch": -45, "yaw": 0, "mode": "absolute"}
 {"command": "gimbalReset"}
 {"command": "motors", "state": true}

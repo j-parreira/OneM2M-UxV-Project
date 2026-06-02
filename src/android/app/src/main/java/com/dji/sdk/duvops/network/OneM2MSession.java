@@ -652,6 +652,9 @@ public class OneM2MSession implements ProtocolClient, DroneCommandListener {
                         if (telemetryRateListener != null)
                             telemetryRateListener.onSetTelemetryRate(optIval);
                         break;
+                    // Ping: ACK já foi enviado antes do switch; nenhuma acção DJI.
+                    // Serve para medir latência de protocolo pura sem overhead do SDK.
+                    case "ping": break;
                     default: Log.d(TAG, "Unknown command: " + command);
                 }
             }, "dji-dispatch-" + command).start();

@@ -45,9 +45,13 @@ class RunConfig:
     # 60 cmds × (10 s + 1 s) = 660 s worst case; 600 s is a safe ceiling for normal conditions.
     ack_run_timeout_s: int = 600
     # Scenario 2: delay between consecutive commands (ms), applied after each ACK.
-    # 1000 ms ≈ 1 cmd/s, matching the benchmark protocol (60 cmds over ~60-90 s).
+    # 1000 ms ≈ 1 cmd/s, matching the benchmark protocol (120 cmds over ~120 s ≈ 2 min).
     # 0 = maximum burst (used only for debugging/stress tests).
     inter_command_delay_ms: int = 1000
+    # Scenario 2 only: if True, all commands are "ping" (no DJI SDK action).
+    # Used to isolate pure protocol latency from DJI SDK dispatch overhead.
+    # Produces _s2p_ filenames instead of _s2_ for unambiguous identification.
+    ping_only: bool = False
     run_id: str = ""        # auto-generated if empty
     notes: str = ""         # operator notes for the JSON sidecar
 
@@ -99,7 +103,8 @@ def run(
     """
     if not run_cfg.run_id:
         run_cfg.run_id = next_run_id(
-            run_cfg.protocol, run_cfg.scenario, config.data_raw_dir, run_cfg.rate_msg_s
+            run_cfg.protocol, run_cfg.scenario, config.data_raw_dir,
+            run_cfg.rate_msg_s, ping_only=run_cfg.ping_only,
         )
 
     client = _make_client(run_cfg.protocol, config)
@@ -279,13 +284,19 @@ def _run_scenario_2(
     records: list[MetricRecord] = []
     n_delivered = 0
 
-    # 4-command repeating cycle: stateless and safe to repeat indefinitely.
-    _CMD_CYCLE = [
-        {"command": "takeoff"},
-        {"command": "identify", "state": True},    # lights on
-        {"command": "land"},
-        {"command": "identify", "state": False},   # lights off
-    ]
+    # Command cycle: stateless, safe to repeat indefinitely.
+    # ping_only → single-command cycle with no DJI SDK action; measures pure protocol latency.
+    # Standard → 4-step flight cycle used in the actual benchmark.
+    _CMD_CYCLE = (
+        [{"command": "ping"}]
+        if run_cfg.ping_only else
+        [
+            {"command": "takeoff"},
+            {"command": "identify", "state": True},    # lights on
+            {"command": "land"},
+            {"command": "identify", "state": False},   # lights off
+        ]
+    )
 
     ack_queue: queue.Queue = queue.Queue()
 

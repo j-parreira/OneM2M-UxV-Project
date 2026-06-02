@@ -13,7 +13,7 @@ src/frontend/
 ├── app.py                  ← entry point: python -m streamlit run app.py
 ├── pages/
 │   ├── 1_manual.py         ← controlo manual + telemetria em directo
-│   ├── 2_benchmark.py      ← orquestrador de runs automatizados
+│   ├── 2_benchmark.py      ← orquestrador multi-run (1–20 runs/combinação; ping_only S2)
 │   └── 3_results.py        ← visualização rápida do último run
 ├── core/
 │   ├── config.py           ← Config dataclass; carrega .env com python-dotenv
