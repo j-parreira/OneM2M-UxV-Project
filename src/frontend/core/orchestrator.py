@@ -278,9 +278,6 @@ def _run_scenario_2(
     records: list[MetricRecord] = []
     n_delivered = 0
 
-    # State-independent commands — safe to rotate without drone state knowledge.
-    _COMMANDS = ["identify", "gimbalReset", "setZoom", "setCameraMode"]
-
     ack_queue: queue.Queue = queue.Queue()
 
     def on_ack(con: dict) -> None:
@@ -304,10 +301,12 @@ def _run_scenario_2(
                 )
                 break
 
-            command = _COMMANDS[(seq_cmd - 1) % len(_COMMANDS)]
+            # Alternate identify state (false/true) — simple, stateless, safe to repeat.
+            state = (seq_cmd % 2 == 0)
             t_cmd_ms = int(time.time() * 1000)
             payload = {
-                "command": command,
+                "command": "identify",
+                "state": state,
                 "seq_cmd": seq_cmd,
                 "t_cmd_ms": t_cmd_ms,
             }
