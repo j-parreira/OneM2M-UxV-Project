@@ -40,10 +40,15 @@ class RunConfig:
     rate_msg_s: Optional[int]   # Scenario 1 only: 1, 5, or 10 msg/s
     n_commands: int         # Scenario 2: 50; Scenario 1: rate × duration_s
     duration_s: int         # Scenario 1 & 3: 300 s; Scenario 2: from n_commands
-    # Scenario 2: wall-clock cap for the entire burst (prevents 50×10=500 s worst case).
-    # A run is marked done (and remaining commands dropped) when this elapses,
-    # regardless of how many ACKs have been received.
-    ack_run_timeout_s: int = 60
+    # Scenario 2: wall-clock cap for the entire burst.
+    # Budget = n_commands × (per_cmd_ack_timeout + send_latency).
+    # 50 cmds × 10 s/cmd + margin = 600 s is a safe ceiling.
+    ack_run_timeout_s: int = 600
+    # Scenario 2: delay between consecutive commands (ms). 0 = maximum burst.
+    # A small delay (200–500 ms) lets the CSE deliver notifications to Android
+    # before the next command arrives, reducing notification backlog and improving
+    # delivery reliability at the cost of total burst duration.
+    inter_command_delay_ms: int = 0
     run_id: str = ""        # auto-generated if empty
     notes: str = ""         # operator notes for the JSON sidecar
 
@@ -205,9 +210,21 @@ def _run_scenario_1(
             header_bytes = client.get_header_bytes(payload_bytes)
 
             # Latency is NTP-dependent: both devices must be synced to the same clock.
+            # Raw delta is kept (can be negative) — negative values indicate the Android
+            # clock is ahead of the dev-machine clock (clock offset, not real latency).
+            # Do NOT clamp to 0 here: the raw value is needed to detect/correct the offset
+            # in the analysis phase. Document the NTP dependency in the paper methodology.
             latency_ms: Optional[float] = None
             if t_send_ms is not None:
-                latency_ms = max(0.0, timestamp_ms - t_send_ms)
+                raw_delta = timestamp_ms - t_send_ms
+                latency_ms = float(raw_delta)
+                # Log first 3 packets per run to diagnose clock offset
+                if seq_local <= 3:
+                    print(
+                        f"[S1] seq={android_seq} t_send_ms={t_send_ms} "
+                        f"timestamp_ms={timestamp_ms} delta={raw_delta:+.0f} ms",
+                        flush=True,
+                    )
 
             rec = MetricRecord(
                 timestamp_ms=timestamp_ms,
@@ -274,9 +291,6 @@ def _run_scenario_2(
     try:
         client.connect()
 
-        # Wall-clock deadline for the full burst, regardless of per-command ACK timeouts.
-        # Without this, n_commands=50 with 10 s/ACK timeout can take up to 500 s if all ACKs
-        # time out. Default 60 s is enough for ≥50 rapid-fire commands in normal conditions.
         run_deadline = time.monotonic() + run_cfg.ack_run_timeout_s
 
         for seq_cmd in range(1, run_cfg.n_commands + 1):
@@ -332,14 +346,28 @@ def _run_scenario_2(
 
             # Per-command ACK timeout, clamped to the remaining run budget so the
             # overall ack_run_timeout_s is always respected.
+            # Drain the queue until the matching seq_cmd arrives or time runs out.
+            # A single get() is not enough: a late ACK from a previous command can
+            # contaminate the queue and cause a cascade of false misses.
             remaining_s = max(0.0, run_deadline - time.monotonic())
-            ack_timeout_s = min(10.0, remaining_s)
-            try:
-                ack_con = ack_queue.get(timeout=ack_timeout_s)
-            except queue.Empty:
-                ack_con = None
+            ack_deadline = time.monotonic() + min(10.0, remaining_s)
+            ack_con = None
+            while time.monotonic() < ack_deadline:
+                try:
+                    candidate = ack_queue.get(timeout=max(0.0, ack_deadline - time.monotonic()))
+                    if candidate.get("seq_cmd") == seq_cmd:
+                        ack_con = candidate
+                        break
+                    # Stale/mismatched ACK — discard and keep waiting
+                    print(
+                        f"[S2] discarded stale ACK seq_cmd={candidate.get('seq_cmd')} "
+                        f"(waiting for {seq_cmd})",
+                        flush=True,
+                    )
+                except queue.Empty:
+                    break
 
-            if ack_con and ack_con.get("seq_cmd") == seq_cmd:
+            if ack_con:
                 t_recv_ms = ack_con.get("t_recv_ms")
                 t_exec_ms = ack_con.get("t_exec_ms")
                 # End-to-end latency: Android receive minus Streamlit send (NTP-dependent).
@@ -378,6 +406,9 @@ def _run_scenario_2(
 
             if progress_cb:
                 progress_cb(n_delivered, seq_cmd, list(records))
+
+            if run_cfg.inter_command_delay_ms > 0:
+                time.sleep(run_cfg.inter_command_delay_ms / 1000.0)
 
     finally:
         client.disconnect()
