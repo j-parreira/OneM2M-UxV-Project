@@ -33,28 +33,34 @@ cfg = load_config()
 
 st.subheader("Scenarios")
 
-col_s1, col_s2 = st.columns(2)
+col_s1, col_s2, col_s3 = st.columns(3)
 
 with col_s1:
     st.info(
-        "**Scenario 1 — Telemetry Uplink**\n\n"
-        "Drone hovers at fixed altitude. Android app pushes telemetry CINs to "
-        "`cse-in/uxv/telemetry` at a fixed rate. Dashboard receives each CIN via "
-        "subscription notification and records arrival timestamp.\n\n"
-        "**Measures:** delivery latency (`timestamp_ms − t_send_ms`), packet loss "
-        "(gaps in `seq`), protocol overhead (`header_bytes / total_bytes`). "
-        "Rates: **4 msg/s** (1 drone) · **16 msg/s** (4 drones simulated) · Duration: 2 min."
+        "**S1 — Telemetry 4 msg/s**\n\n"
+        "Drone hovers. Android pushes telemetry CINs at **4 msg/s** (250 ms interval) "
+        "for 2 min. Dashboard receives each via subscription notification.\n\n"
+        "**Simulates:** single drone uplink.\n"
+        "**Measures:** latency (`timestamp_ms − t_send_ms`), packet loss, overhead."
     )
 
 with col_s2:
     st.info(
-        "**Scenario 2 — Command Round-Trip**\n\n"
-        "Dashboard sends 120 commands at 1/s to `cse-in/uxv/commands`. "
-        "Standard cycle: **takeoff → lights on → land → lights off** (repeating). "
-        "Ping-only mode: **ping** (no DJI SDK action) — measures pure protocol latency.\n\n"
-        "**Measures:** CIN create RTT (`cin_create_ms`, Streamlit→CSE, NTP-free); "
-        "command latency (`t_recv_ms − t_cmd_ms`, cross-device NTP); "
-        "delivery rate within 10 s timeout."
+        "**S2 — Telemetry 16 msg/s**\n\n"
+        "Same as S1 but at **16 msg/s** (62 ms interval). Rate set via "
+        "`setTelemetryRate` command at run start — no app changes needed.\n\n"
+        "**Simulates:** 4 simultaneous drones.\n"
+        "**Measures:** same as S1, higher load."
+    )
+
+with col_s3:
+    st.info(
+        "**S3 — Command Round-Trip**\n\n"
+        "Dashboard sends 120 commands at 1/s. Cycle: "
+        "**takeoff → lights on → land → lights off**. Android ACKs each command.\n\n"
+        "Ping-only mode available for baseline (no DJI action).\n"
+        "**Measures:** `cin_create_ms` (NTP-free), `t_recv_ms − t_cmd_ms` (NTP), "
+        "delivery rate."
     )
 
 st.divider()
@@ -67,26 +73,36 @@ st.subheader("Run Configuration")
 
 col1, col2, col3 = st.columns(3)
 
+# Paper scenario → internal (scenario, rate_msg_s) mapping.
+# S1/S2 map to internal scenario=1 (telemetry) with different rates.
+# S3 maps to internal scenario=2 (commands).
+_PAPER_SCENARIOS = {
+    "S1 — Telemetry 4 msg/s":   (1, 4),
+    "S2 — Telemetry 16 msg/s":  (1, 16),
+    "S3 — Commands (1 cmd/s)":  (2, None),
+}
+
 with col1:
     protocol = st.selectbox("Protocol", ["websocket", "mqtt", "http", "coap"])
-    scenario = st.selectbox("Scenario", [1, 2], format_func=lambda s: f"Scenario {s}")
+    paper_scenario_label = st.selectbox("Paper scenario", list(_PAPER_SCENARIOS.keys()))
+    scenario, rate_msg_s = _PAPER_SCENARIOS[paper_scenario_label]
     n_runs = st.number_input(
         "Number of runs",
         min_value=1,
         max_value=20,
         value=10,
         step=1,
-        help="Runs per combination. 10 runs → 95% CI suitable for the paper.",
+        help="Runs per combination. 10 runs → suitable for 95% CI in the paper.",
     )
 
 with col2:
     if scenario == 1:
-        rate_msg_s = st.selectbox("Telemetry rate", [4, 16], format_func=lambda r: f"{r} msg/s")
         duration_s = st.number_input("Duration (s)", min_value=10, max_value=600, value=120, step=10)
         n_commands = (rate_msg_s or 1) * duration_s
-        ack_run_timeout_s = None  # unused in S1
-        inter_command_delay_ms = 0  # unused in S1
+        ack_run_timeout_s = None
+        inter_command_delay_ms = 0
         ping_only = False
+        st.caption(f"Rate: **{rate_msg_s} msg/s** ({1000 // rate_msg_s} ms interval) — set via protocol at run start.")
     else:
         rate_msg_s = None
         n_commands = st.number_input(
@@ -110,37 +126,36 @@ with col2:
             max_value=900,
             value=600,
             step=10,
-            help="Wall-clock cap per run. 120 cmds × (10 s/ACK + 1 s) = 1320 s worst case; 600 s is safe for normal conditions.",
+            help="Wall-clock cap per run. 600 s is safe for normal conditions.",
         )
         duration_s = int(ack_run_timeout_s)
         ping_only = st.checkbox(
             "Ping only (no DJI commands)",
             value=False,
-            help="Send only 'ping' commands — no takeoff/land/identify. Measures pure protocol latency. Produces _s2p_ files.",
+            help="Send only 'ping' — no takeoff/land/identify. Baseline for pure protocol latency. Produces _s2p_ files.",
         )
 
 with col3:
     notes = st.text_area("Operator notes", placeholder="Battery %, network conditions, …", height=120)
 
 # Run-ID preview for the first run in the batch.
+_preview_rate = rate_msg_s if scenario == 1 else None
 preview_run_id = next_run_id(
-    protocol, scenario, cfg.data_raw_dir, rate_msg_s if scenario == 1 else None,
+    protocol, scenario, cfg.data_raw_dir, _preview_rate,
     ping_only=ping_only,
 )
+_last_id = f"{preview_run_id[:-3]}{int(preview_run_id[-3:]) + int(n_runs) - 1:03d}"
 st.caption(
-    f"Run ID preview (first run): **{preview_run_id}** → "
-    f"**{preview_run_id[:-3]}{int(preview_run_id[-3:]) + int(n_runs) - 1:03d}** "
-    f"({int(n_runs)} run{'s' if int(n_runs) > 1 else ''})"
+    f"Run ID preview: **{preview_run_id}** → **{_last_id}** ({int(n_runs)} run{'s' if int(n_runs) > 1 else ''})"
 )
 
 # NTP advisory.
-if scenario in (1, 2):
-    st.warning(
-        "**NTP sync required:** `latency_ms` is computed across two independent clocks "
-        "(dev machine and Android RC). Ensure both are NTP-synchronised before starting. "
-        "On Android: Settings → General Management → Date and Time → automatic.",
-        icon="⚠️",
-    )
+st.warning(
+    "**NTP sync required:** `latency_ms` is computed across two independent clocks "
+    "(dev machine and Android RC). Ensure both are NTP-synchronised before starting. "
+    "On Android: Settings → General Management → Date and Time → automatic.",
+    icon="⚠️",
+)
 
 st.divider()
 
