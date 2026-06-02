@@ -43,6 +43,8 @@ if "connected_protocol" not in st.session_state:
     st.session_state.connected_protocol = None
 if "last_ack" not in st.session_state:
     st.session_state.last_ack = None
+if "manual_seq" not in st.session_state:
+    st.session_state.manual_seq = 0
 
 col_status, col_connect = st.columns([3, 1])
 
@@ -99,6 +101,7 @@ with col_connect:
                 pass
             st.session_state.manual_client = None
             st.session_state.connected_protocol = None
+            st.session_state.manual_seq = 0
             st.rerun()
 
 st.divider()
@@ -111,22 +114,25 @@ st.subheader("Commands")
 
 client: Optional = st.session_state.manual_client
 
+# Each tuple: (label, base payload dict).
+# seq_cmd and t_cmd_ms are injected at send time from the session counter.
 CMD_BUTTONS = [
-    ("Takeoff", "takeoff"),
-    ("Land", "land"),
-    ("Identify", "identify"),
-    ("RTH", "startGoHome"),
+    ("Takeoff",  {"command": "takeoff"}),
+    ("Land",     {"command": "land"}),
+    ("LED On",   {"command": "identify", "state": True}),
+    ("LED Off",  {"command": "identify", "state": False}),
+    ("RTH",      {"command": "startGoHome"}),
 ]
 
 cols = st.columns(len(CMD_BUTTONS) + 1)
-seq_cmd = int(time.time())   # use timestamp as a loose sequence number
 
-for i, (label, cmd) in enumerate(CMD_BUTTONS):
+for i, (label, base_payload) in enumerate(CMD_BUTTONS):
     with cols[i]:
         if st.button(label, disabled=client is None, use_container_width=True):
+            st.session_state.manual_seq += 1
             t_cmd_ms = int(time.time() * 1000)
-            payload = {"command": cmd, "seq_cmd": seq_cmd, "t_cmd_ms": t_cmd_ms}
-            with st.spinner(f"Sending {cmd}…"):
+            payload = {**base_payload, "seq_cmd": st.session_state.manual_seq, "t_cmd_ms": t_cmd_ms}
+            with st.spinner(f"Sending {base_payload['command']}…"):
                 latency_ms, ok = client.send_command(payload)
             if ok:
                 st.success(f"Sent — CIN latency: {latency_ms:.1f} ms")
@@ -134,7 +140,7 @@ for i, (label, cmd) in enumerate(CMD_BUTTONS):
                 st.error("Send failed")
 
 with cols[-1]:
-    custom_cmd = st.text_input("Custom JSON", placeholder='{"command":"identify"}', label_visibility="collapsed")
+    custom_cmd = st.text_input("Custom JSON", placeholder='{"command":"identify","state":true}', label_visibility="collapsed")
     if st.button("Send custom", disabled=client is None or not custom_cmd, use_container_width=True):
         try:
             payload = json.loads(custom_cmd)
@@ -142,6 +148,11 @@ with cols[-1]:
             st.error("Invalid JSON")
             payload = None
         if payload is not None:
+            # Inject timing fields if not already present in the custom payload.
+            if "t_cmd_ms" not in payload:
+                st.session_state.manual_seq += 1
+                payload["seq_cmd"] = st.session_state.manual_seq
+                payload["t_cmd_ms"] = int(time.time() * 1000)
             latency_ms, ok = client.send_command(payload)
             if ok:
                 st.success(f"Sent — {latency_ms:.1f} ms")
