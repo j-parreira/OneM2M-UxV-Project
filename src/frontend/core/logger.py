@@ -69,18 +69,13 @@ def next_run_id(
     scenario: int,
     data_raw_dir: Path,
     rate_msg_s: Optional[int] = None,
-    ping_only: bool = False,
 ) -> str:
     """Return the next unused run ID for a given (protocol, scenario[, rate]) tuple.
 
     Counts existing CSV files in data_raw_dir matching the pattern and
     increments the run counter. For Scenario 1, the rate is encoded in the
-    filename (e.g. ``_r5_``) so runs at different rates are counted
-    independently and are unambiguous without opening the JSON sidecar.
-
-    For Scenario 2 ping-only runs (``ping_only=True``), the scenario suffix
-    is ``s2p`` instead of ``s2``, making ping diagnostic runs unambiguous
-    in the filesystem without opening the JSON sidecar.
+    filename (e.g. ``_r4_`` or ``_r16_``) so runs at different rates are
+    counted independently and are unambiguous without opening the JSON sidecar.
 
     Parameters
     ----------
@@ -88,20 +83,15 @@ def next_run_id(
     scenario : int
     data_raw_dir : Path
     rate_msg_s : int or None
-        Required for Scenario 1 (1, 5, or 10 msg/s). Ignored for Scenario 2.
-    ping_only : bool
-        Scenario 2 only. If True, uses ``s2p`` suffix in the filename.
+        Required for Scenario 1 (e.g. 4 or 16 msg/s). Ignored for Scenario 2.
 
     Returns
     -------
-    str, e.g. 'websocket_s1_r5_20260601_run003', 'http_s2_20260601_run001',
-         or 'http_s2p_20260601_run001' (ping-only diagnostic run)
+    str, e.g. 'websocket_s1_r4_20260601_run003' or 'http_s2_20260601_run001'
     """
     date_str = time.strftime("%Y%m%d")
     if scenario == 1 and rate_msg_s is not None:
         stem_prefix = f"{protocol}_s{scenario}_r{rate_msg_s}_{date_str}_run"
-    elif scenario == 2 and ping_only:
-        stem_prefix = f"{protocol}_s2p_{date_str}_run"
     else:
         stem_prefix = f"{protocol}_s{scenario}_{date_str}_run"
     existing = sorted(data_raw_dir.glob(f"{stem_prefix}*.csv")) if data_raw_dir.exists() else []

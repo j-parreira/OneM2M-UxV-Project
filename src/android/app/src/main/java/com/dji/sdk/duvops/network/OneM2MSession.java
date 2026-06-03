@@ -684,11 +684,12 @@ public class OneM2MSession implements ProtocolClient, DroneCommandListener {
                     .put("seq_cmd",   seqCmd)
                     .put("t_cmd_ms",  tCmdMs)
                     .put("t_recv_ms", tRecvMs)
-                    .put("t_exec_ms", System.currentTimeMillis());
+                    .put("t_exec_ms", tRecvMs);  // ≈ t_recv_ms (sent before DJI dispatch)
             // cnf omitido — validação falha em ACME CSE v2025.11 com "application/json"
             JSONObject pc = new JSONObject()
                     .put("m2m:cin", new JSONObject()
                             .put("con", ackData.toString()));
+            Log.d(TAG, "sendCommandAck: seq_cmd=" + seqCmd + " cmd=" + command);
             sendRequest(OP_CREATE, CSE_BASE + "/" + AE_NAME + "/ack", TY_CIN, pc, null);
         } catch (JSONException e) {
             Log.e(TAG, "sendCommandAck: " + e.getMessage());
