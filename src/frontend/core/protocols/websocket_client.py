@@ -99,12 +99,28 @@ class WebSocketClient(ProtocolClient):
         self._recv_thread.start()
 
         self._register_ae()
-        self._tel_sub_ri = self._ensure_subscription("cse-in/uxv/telemetry", _SUB_TEL_RN)
-        self._ack_sub_ri = self._ensure_subscription("cse-in/uxv/ack", _SUB_ACK_RN)
-        if self._tel_sub_ri is None:
-            print(f"[{time.strftime('%H:%M:%S')}][WS] WARNING: telemetry subscription failed — Android container may not exist yet. Reconnect after Android registers.", flush=True)
-        if self._ack_sub_ri is None:
-            print(f"[{time.strftime('%H:%M:%S')}][WS] WARNING: ack subscription failed — Android container may not exist yet.", flush=True)
+
+        # Only subscribe to resources that have a registered callback.
+        # Creating a subscription without a callback generates unnecessary CSE
+        # notifications that congest the shared WS delivery queue — at 4 msg/s
+        # telemetry, 240 surplus notifications/min delay ACK notifications for S3.
+        if self._telemetry_cb is not None:
+            self._tel_sub_ri = self._ensure_subscription("cse-in/uxv/telemetry", _SUB_TEL_RN)
+            if self._tel_sub_ri is None:
+                print(f"[{time.strftime('%H:%M:%S')}][WS] WARNING: telemetry subscription failed — Android container may not exist yet. Reconnect after Android registers.", flush=True)
+        else:
+            # Clean up any stale subscription from a previous S1/S2 run.
+            self._delete_resource(f"cse-in/uxv/telemetry/{_SUB_TEL_RN}")
+            self._tel_sub_ri = None
+
+        if self._ack_cb is not None:
+            self._ack_sub_ri = self._ensure_subscription("cse-in/uxv/ack", _SUB_ACK_RN)
+            if self._ack_sub_ri is None:
+                print(f"[{time.strftime('%H:%M:%S')}][WS] WARNING: ack subscription failed — Android container may not exist yet.", flush=True)
+        else:
+            self._delete_resource(f"cse-in/uxv/ack/{_SUB_ACK_RN}")
+            self._ack_sub_ri = None
+
         print(f"[{time.strftime('%H:%M:%S')}][WS] tel_sub_ri={self._tel_sub_ri}  ack_sub_ri={self._ack_sub_ri}", flush=True)
 
     def send_command(self, payload: dict) -> tuple[float | None, bool]:
