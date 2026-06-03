@@ -292,6 +292,23 @@ def _run_scenario_2(
     try:
         client.connect()
 
+        # Reduce telemetry to near-zero before the command burst.
+        # At 4 msg/s, concurrent telemetry CIN writes block the CSE asyncio event loop
+        # (TinyDB is synchronous), causing ACK notification delays of 10–30 s.
+        # S3 measures command latency with no background load — stopping telemetry
+        # is semantically appropriate and eliminates this source of packet loss.
+        client.send_command({"command": "setTelemetryRate", "intervalMs": 60000})
+        # Wait for the rate change to propagate and any in-flight telemetry CINs to settle.
+        time.sleep(3.0)
+        # Drain the setup command's ACK (seq_cmd defaults to 0 on Android) so the
+        # main loop doesn't see a spurious entry while waiting for seq_cmd=1.
+        while True:
+            try:
+                ack_queue.get_nowait()
+            except queue.Empty:
+                break
+
+        # Start the run clock AFTER setup so the 600 s budget is spent on commands only.
         run_deadline = time.monotonic() + run_cfg.ack_run_timeout_s
 
         for seq_cmd in range(1, run_cfg.n_commands + 1):
