@@ -142,6 +142,39 @@ def run(
 # Scenario implementations
 # ------------------------------------------------------------------
 
+# Warmup window (seconds) at the start of S1 runs: discards stale CSE notifications
+# that predate this run. The ACME CSE TinyDB queue persists across connections — on
+# reconnect the CSE replays any backlogged notifications. Without this drain window,
+# a previous high-rate session causes the next run to receive hundreds of stale CINs
+# (observed: run002 received 421/240, mean latency 96 s after an uncleared backlog).
+# 3 s is conservative: at 4 msg/s the CSE delivers all pending items in ≤ 3 s
+# assuming no severe backlog. For 16 msg/s sessions, do `docker compose restart` first.
+_S1_DRAIN_S = 3.0
+
+
+def _drain_stale(q: queue.Queue, drain_s: float) -> int:
+    """Discard all items arriving in q for drain_s seconds.
+
+    Parameters
+    ----------
+    q       : Queue to drain (telemetry or ack queue).
+    drain_s : How many seconds to discard incoming items.
+
+    Returns
+    -------
+    int — number of items discarded.
+    """
+    n = 0
+    t_end = time.monotonic() + drain_s
+    while time.monotonic() < t_end:
+        try:
+            q.get_nowait()
+            n += 1
+        except queue.Empty:
+            time.sleep(0.05)
+    return n
+
+
 def _run_scenario_1(
     client: ProtocolClient,
     run_cfg: RunConfig,
@@ -153,8 +186,9 @@ def _run_scenario_1(
     Steps:
       1. Connect + subscribe to telemetry
       2. Send setTelemetryRate to configure the Android emission rate
-      3. Collect CINs until duration_s elapsed or stop_event set
-      4. Slow telemetry back down, then disconnect
+      3. Drain stale CSE notifications for _S1_DRAIN_S seconds (warmup)
+      4. Collect CINs for duration_s seconds or until stop_event set
+      5. Slow telemetry back down, then disconnect
 
     Latency = timestamp_ms (Streamlit receive) − t_send_ms (Android send).
     NTP-dependent: both clocks must be synced on the same LAN.
@@ -174,6 +208,14 @@ def _run_scenario_1(
     try:
         client.connect()
         client.send_command({"command": "setTelemetryRate", "intervalMs": interval_ms})
+
+        # Drain stale CSE queue before starting the measurement window.
+        n_stale = _drain_stale(tel_queue, _S1_DRAIN_S)
+        if n_stale:
+            print(
+                f"[{time.strftime('%H:%M:%S')}][S1] drained {n_stale} stale notifications",
+                flush=True,
+            )
 
         t_deadline = time.monotonic() + run_cfg.duration_s
 
