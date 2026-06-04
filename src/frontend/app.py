@@ -38,9 +38,9 @@ st.markdown(
     "**Research objective:** Quantify end-to-end latency, throughput, packet loss, and "
     "protocol overhead for OneM2M middleware across **WebSocket, MQTT, HTTP, and CoAP** "
     "in a DJI UxV operational scenario. "
-    "Scenarios: S1 — sustained telemetry uplink (drone→CSE→dashboard); "
-    "S2 — command round-trip (dashboard→CSE→drone→ACK). "
-    "Target: ≥30 runs per protocol per scenario. "
+    "Scenarios: S1 — telemetry uplink at 4 msg/s; S2 — telemetry uplink at 16 msg/s; "
+    "S3 — command ping round-trip (1/s). "
+    "Target: 10 runs per protocol per scenario (120 total). "
     "Deliverable: MDPI paper, 8–12 pp. — IPL Leiria, MSc Engenharia Informática."
 )
 
@@ -158,10 +158,10 @@ ae_ok, ae_msg = check_android_ae(cfg)
 counts = count_runs(cfg.data_raw_dir)
 
 PROTOCOLS = ["websocket", "mqtt", "http", "coap"]
-S1_RATES = [1, 5, 10]
-TARGET = 30
+S1_RATES = [4, 16]
+TARGET = 10
 total_runs = sum(counts.values())
-# S1: 3 rates × 4 protocols × 30; S2: 4 protocols × 30.
+# S1: 2 rates × 4 protocols × 10; S3: 4 protocols × 10 → 120 total.
 needed = len(PROTOCOLS) * (len(S1_RATES) + 1) * TARGET
 
 with col_cse:
@@ -192,8 +192,8 @@ with col_data:
 st.divider()
 st.subheader("Data Collection Progress")
 st.caption(
-    f"Target: {TARGET} runs per (protocol × scenario × rate). "
-    f"S1 has 3 rates (1/5/10 msg/s); S2 is rate-independent. "
+    f"Target: {TARGET} runs per (protocol × scenario). "
+    f"S1: 4 msg/s — S2: 16 msg/s — S3: 60 ping cmds at 1/s. "
     f"Counts valid CSV files in `{cfg.data_raw_dir}`."
 )
 
@@ -206,9 +206,9 @@ for proto in PROTOCOLS:
         n = counts.get((proto, 1, rate), 0)
         with rate_cols[i + 1]:
             st.progress(min(1.0, n / TARGET), text=f"S1 r{rate}: {n}/{TARGET}")
-    s2_n = counts.get((proto, 2, None), 0)
+    s3_n = counts.get((proto, 2, None), 0)
     with rate_cols[-1]:
-        st.progress(min(1.0, s2_n / TARGET), text=f"S2: {s2_n}/{TARGET}")
+        st.progress(min(1.0, s3_n / TARGET), text=f"S3: {s3_n}/{TARGET}")
 
 if st.button("↻ Refresh"):
     st.rerun()
