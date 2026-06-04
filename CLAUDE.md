@@ -156,8 +156,8 @@ Dev machine (Streamlit)              ACME CSE                  Android RC (DJI R
 ```
 
 **Metrics captured per command:**
-- `cin_create_ms` = Streamlit→CSE round-trip (monotonic, single-device, no NTP dependency)
-- `latency_ms = t_recv_ms − t_cmd_ms` (NTP-dependent: two clocks)
+- `cin_create_ms` = Streamlit→CSE round-trip (monotonic, single-device, no NTP dependency) — **primary S3 latency metric for the paper**
+- `latency_ms = t_recv_ms − t_cmd_ms` (NTP-dependent: two clocks) — **typically negative in S3** (Android clock behind Streamlit → measured value = true_latency − |δ| < 0); do not use directly for paper latency analysis
 - `t_exec_ms` = `System.currentTimeMillis()` after Android dispatches command (dispatch overhead)
 - `delivered = True` when ACK arrives within 10 s timeout
 
@@ -171,8 +171,8 @@ message (telemetry CIN in S1, command+ACK pair in S2).
 | Field | Type | Description | NTP-dep? |
 |---|---|---|---|
 | `timestamp_ms` | int | Streamlit wall-clock at receive time | — |
-| `latency_ms` | float\|None | S1: `timestamp_ms−t_send_ms`; S2: `t_recv_ms−t_cmd_ms` | **Yes** |
-| `cin_create_ms` | float\|None | S2 only: Streamlit→CSE CIN round-trip (monotonic) | No |
+| `latency_ms` | float\|None | S1: `timestamp_ms−t_send_ms` (inflated by NTP offset, always positive); S3: `t_recv_ms−t_cmd_ms` (deflated, **typically negative** — Android clock behind Streamlit) | **Yes** |
+| `cin_create_ms` | float\|None | S3 only: Streamlit→CSE CIN round-trip (monotonic, same machine) — **primary S3 latency metric** | No |
 | `t_cmd_ms` | int\|None | S2: Streamlit wall-clock when command was sent | — |
 | `t_recv_ms` | int\|None | S2: Android wall-clock when command was received | — |
 | `t_exec_ms` | int\|None | S2: Android wall-clock after command dispatched | — |
@@ -183,11 +183,12 @@ message (telemetry CIN in S1, command+ACK pair in S2).
 | `delivered` | bool | True if message received within timeout | — |
 
 **Derived paper metrics:**
-- **Latency** = mean/median/p95 of `latency_ms` per protocol (note NTP caveat in paper)
-- **Throughput** = `n_delivered / duration_s` (S1) or `n_commands / total_time_s` (S2)
-- **Packet loss** = gaps in `seq` counter (S1); `1 − n_delivered/n_commands` (S2)
+- **S1/S2 Latency** = mean/median/p95 of `latency_ms` per protocol — NTP-inflated; raw values kept, mention offset in paper as methodological caveat. Estimated offset δ ≈ `mean(latency_ms_S3) − cin_create_ms_S3/2` (negative, Android behind).
+- **S3 Latency** = mean/median/p95 of `cin_create_ms` (NTP-free). Do **not** use `latency_ms` for S3 — values are negative due to NTP and not comparable with S1/S2.
+- **Throughput** = `n_delivered / duration_s` (S1/S2) or `n_commands / total_time_s` (S3)
+- **Packet loss** = gaps in `seq` counter (S1/S2); `1 − n_delivered/n_commands` (S3)
 - **Protocol overhead** = `header_bytes / (header_bytes + payload_bytes) × 100`
-- **Jitter** = std dev of `latency_ms` within a run
+- **Jitter** = std dev of `cin_create_ms` (S3) or `latency_ms` (S1/S2) within a run
 
 ---
 
