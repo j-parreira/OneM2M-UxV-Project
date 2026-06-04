@@ -13,6 +13,8 @@ Outputs:
     data/processed/summary.csv           — aggregate table (mean ± std across runs)
 
 Dependencies: pandas, numpy, scipy (via requirements.txt in src/analysis/)
+
+Authors: João Parreira, Pedro Barbeiro
 """
 import sys
 from pathlib import Path

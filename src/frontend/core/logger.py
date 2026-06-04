@@ -11,6 +11,8 @@ CSV filename format:
   Scenario 2: <protocol>_s2_<YYYYMMDD>_run<NNN>.csv
 
 JSON sidecar: <same_stem>.json
+
+Authors: João Parreira, Pedro Barbeiro
 """
 import csv
 import json

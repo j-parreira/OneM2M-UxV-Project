@@ -6,6 +6,8 @@ Never hardcode IPs, ports, or keys in this file.
 Usage:
     from core.config import load_config
     cfg = load_config()   # call once per Streamlit session
+
+Authors: João Parreira, Pedro Barbeiro
 """
 from dataclasses import dataclass
 from pathlib import Path

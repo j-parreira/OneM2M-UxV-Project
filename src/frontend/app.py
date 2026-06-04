@@ -11,6 +11,8 @@ Pages:
     1_manual.py   — Manual command dispatch + live telemetry (pre-benchmark validation)
     2_benchmark.py — Automated benchmark orchestrator (S1/S2 runs → data/raw/)
     3_results.py  — Aggregate view of collected CSVs (latency, overhead, comparison)
+
+Authors: João Parreira, Pedro Barbeiro
 """
 import re
 from collections import defaultdict

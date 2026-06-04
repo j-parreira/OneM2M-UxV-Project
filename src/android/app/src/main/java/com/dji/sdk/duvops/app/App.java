@@ -6,6 +6,7 @@
  * do MultiDex e do helper de segurança.
  *
  * @author João Parreira
+ * @author Pedro Barbeiro
  * @version 2.0
  */
 package com.dji.sdk.duvops.app;

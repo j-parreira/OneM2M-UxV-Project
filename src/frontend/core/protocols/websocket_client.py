@@ -6,6 +6,8 @@ against ACME CSE v2025.11. See docs/ai-context/cse-dev.md § WebSocket Binding.
 
 Transport: websockets 13.1 sync API (websockets.sync.client), which is
 thread-safe for concurrent send/recv.
+
+Authors: João Parreira, Pedro Barbeiro
 """
 import json
 import logging

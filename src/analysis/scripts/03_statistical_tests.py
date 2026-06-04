@@ -19,6 +19,8 @@ and non-Gaussian. Kruskal-Wallis does not assume normality; it ranks values
 across all groups and tests whether the rank distributions differ.
 
 Dependencies: pandas, numpy, scipy, scikit-posthocs (requirements.txt)
+
+Authors: João Parreira, Pedro Barbeiro
 """
 import json
 import sys

@@ -11,6 +11,8 @@ the same way. See docs/ai-context/cse-dev.md § MQTT Topic Structure.
 
 Message body: same flat JSON as WebSocket (no m2m:rqp wrapper).
 Library: paho-mqtt 2.1.0 (MQTTv5 available; using v3.1.1 for compatibility).
+
+Authors: João Parreira, Pedro Barbeiro
 """
 import json
 import threading

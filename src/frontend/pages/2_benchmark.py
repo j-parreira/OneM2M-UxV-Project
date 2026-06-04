@@ -8,6 +8,8 @@ Scenarios (paper mapping):
   S3 — Command ping       (internal scenario=2, 120 cmds, 1 cmd/s)
 
 See docs/benchmark-flow.md for the full experimental workflow.
+
+Authors: João Parreira, Pedro Barbeiro
 """
 import threading
 import time
@@ -248,7 +250,7 @@ elif result is not None:
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Run ID", result.run_id)
     c2.metric("Delivered", f"{result.n_delivered} / {result.n_total}")
-    loss_pct = (1 - result.n_delivered / max(result.n_total, 1)) * 100
+    loss_pct = max(0.0, (1 - result.n_delivered / max(result.n_total, 1)) * 100)
     c3.metric("Packet loss", f"{loss_pct:.1f}%")
     if result.mean_latency_ms is not None:
         c4.metric("Mean latency", f"{result.mean_latency_ms:.1f} ms")

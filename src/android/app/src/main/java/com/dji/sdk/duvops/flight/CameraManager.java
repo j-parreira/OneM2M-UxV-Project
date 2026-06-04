@@ -6,6 +6,7 @@
  * Inclui getters para o frontend interrogar o estado atual da câmara.
  *
  * @author João Parreira
+ * @author Pedro Barbeiro
  * @version 3.0
  */
 package com.dji.sdk.duvops.flight;

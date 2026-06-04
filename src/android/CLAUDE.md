@@ -3,6 +3,8 @@
 > Guia de arquitectura, convenções e integração para o benchmark OneM2M.
 > Esta versão da app foi adaptada do projecto de produção (dboidsView/DuvopsView)
 > para uso académico — benchmarking de protocolos OneM2M com ACME CSE.
+>
+> **Autores:** João Parreira, Pedro Barbeiro
 
 ## Build Commands
 - `.\gradlew.bat assembleDebug` — Build debug APK (Windows)
@@ -521,6 +523,9 @@ o mesmo originator em `associatedConnections`, reutiliza-a.
 | CoAP: Android nunca recebe notificações push do CSE (ack cni=0) | Docker Desktop no Windows bloqueia UDP de containers para dispositivos LAN externos; Californium CoapServer (porta 5684) nunca disparava. Corrigido (2026-05-31): poa mudou para `http://rc_ip:8182` (NanoHTTPD), notificações chegam via HTTP/TCP. |
 | `WifiManager.getConnectionInfo()` deprecated | `@SuppressWarnings("deprecation")` em HTTP e CoAP — RC usa API ≤ 29, funciona |
 | S2 ACK timeout: ~40% packet loss em takeoff/land no Cenário 2 | DJI SDK `startTakeoff`/`startLanding` bloqueiam o thread de callback OkHttp ~11 s (aguardam confirmação física do drone). O ACK chegava ao Streamlit após o timeout de 10 s/comando, e o comando seguinte ficava bloqueado na fila OkHttp. Corrigido (2026-06-02) em `OneM2MSession.dispatchCommand`: ACK enviado imediatamente antes do switch; dispatch DJI feito em background thread separado. |
+| S3 ACK ~73% packet loss (primeira versão) | Streamlit criava sub de telemetria mesmo em S3 (ping-only). 240 notificações/min de telemetria congestionavam a fila WS do CSE. Corrigido (2026-06-02): subscriptions condicionais em `websocket_client.connect()` — S3 não cria `sub-streamlit-tel`. |
+| S3 ACK ~56% packet loss após fix anterior | Android continuava a enviar telemetria a 4 msg/s entre runs; TinyDB writes bloqueavam o event loop asyncio do CSE. Corrigido (2026-06-03): Streamlit envia `setTelemetryRate(60000)` + `sleep(3)` antes do burst de comandos S3. Android responde pausando telemetria para ~1 CIN/min. |
+| Runs S1/S2 bloqueiam após sessão a 16 msg/s (0 notificações) | Android mantém taxa de telemetria entre runs Streamlit. A 16 msg/s, TinyDB writes bloqueiam o CSE asyncio loop ~97% do tempo; run seguinte recebe 0 notificações. Corrigido (2026-06-04): `_run_scenario_1` envia `setTelemetryRate(60000)` + `sleep(3)` no `finally` antes de `disconnect()`. **Nota de operação:** após sessão a 16 msg/s, reiniciar o CSE (`docker compose restart`) antes de retomar testes. |
 
 ---
 

@@ -3,6 +3,8 @@
 Used for integration testing and pre-benchmark validation (see benchmark-flow.md §2).
 Connects to the CSE using the selected protocol, dispatches commands, and
 subscribes to telemetry/ACK notifications for live display.
+
+Authors: João Parreira, Pedro Barbeiro
 """
 import json
 import math

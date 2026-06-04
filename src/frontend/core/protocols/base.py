@@ -7,6 +7,8 @@ Thread-safety contract:
   connect() and disconnect() are called from the main/orchestrator thread.
   subscribe_telemetry() and subscribe_ack() register callbacks that will be
   invoked from a background thread — callbacks must be thread-safe.
+
+Authors: João Parreira, Pedro Barbeiro
 """
 from abc import ABC, abstractmethod
 from typing import Callable

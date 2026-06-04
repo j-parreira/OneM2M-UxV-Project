@@ -6,6 +6,7 @@
  * de acessório USB para o DJI SDK (necessário para estabelecer a conexão).
  *
  * @author João Parreira
+ * @author Pedro Barbeiro
  * @version 2.0
  */
 package com.dji.sdk.duvops.app;

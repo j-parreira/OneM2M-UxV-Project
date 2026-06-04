@@ -5,6 +5,7 @@
  Suporta deteção de vídeo parado (cover view) após {@value #WAIT_TIME}ms sem frames.
  *
  * @author DJI SDK sample (adaptado por João Parreira)
+ * @author Pedro Barbeiro
  * @version 2.0
  */
 package com.dji.sdk.duvops.utils;

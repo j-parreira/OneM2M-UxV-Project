@@ -6,6 +6,8 @@ Research project benchmarking OneM2M middleware across MQTT, WebSocket, HTTP, an
 DJI UxV (unmanned vehicle) operations. Academic context: IPL Leiria, Mestrado em Engenharia
 Informática.
 
+**Authors:** João Parreira, Pedro Barbeiro
+
 **Deliverable:** MDPI journal article, 8–12 pp., **English**, IMRaD structure.
 
 **Deadlines:**
@@ -258,6 +260,20 @@ When running the full system:
 4. Drone must be powered on before DJI SDK commands are issued
 
 The Android app is configured with the CSE IP via a settings screen — no hardcoded IP.
+
+### Benchmark Run Procedure (inter-run isolation)
+
+After a S2 (16 msg/s) session, the ACME CSE TinyDB may have residual state that degrades
+subsequent runs. Between benchmark sessions (not individual runs within a session):
+
+```powershell
+# From src/cse/
+docker compose restart
+```
+
+This clears the CSE's in-memory notification queue and TinyDB state.
+Within a session, runs are isolated by `setTelemetryRate(60000)` sent automatically at end of
+each S1/S2 run (in `orchestrator._run_scenario_1`) — no manual restart needed between runs.
 
 ---
 

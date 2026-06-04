@@ -19,6 +19,7 @@
  * </pre>
  *
  * @author João Parreira
+ * @author Pedro Barbeiro
  * @version 3.0
  */
 package com.dji.sdk.duvops.app;

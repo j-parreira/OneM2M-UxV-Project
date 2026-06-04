@@ -5,6 +5,7 @@
  * para manter-se ligado e aloca a view principal.
  *
  * @author João Parreira
+ * @author Pedro Barbeiro
  * @version 2.0
  */
 package com.dji.sdk.duvops.flight;

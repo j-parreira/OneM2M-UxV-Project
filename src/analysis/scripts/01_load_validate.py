@@ -15,6 +15,8 @@ Outputs:
     (stdout)                          — per-file validation report
 
 Dependencies: pandas (via requirements.txt in src/analysis/)
+
+Authors: João Parreira, Pedro Barbeiro
 """
 import json
 import re

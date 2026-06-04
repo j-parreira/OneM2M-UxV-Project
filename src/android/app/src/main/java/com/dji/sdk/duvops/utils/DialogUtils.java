@@ -5,6 +5,7 @@
  * ({@code set_dialog}). Usado para mensagens de feedback ao utilizador.
  *
  * @author João Parreira
+ * @author Pedro Barbeiro
  * @version 2.0
  */
 package com.dji.sdk.duvops.utils;

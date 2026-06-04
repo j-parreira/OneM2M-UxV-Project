@@ -5,6 +5,7 @@
  * independentemente da thread de chamada.
  *
  * @author João Parreira
+ * @author Pedro Barbeiro
  * @version 2.0
  */
 package com.dji.sdk.duvops.utils;

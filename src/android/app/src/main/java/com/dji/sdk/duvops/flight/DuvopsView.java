@@ -28,6 +28,7 @@
  * </ul>
  *
  * @author João Parreira
+ * @author Pedro Barbeiro
  * @version 4.0
  */
 package com.dji.sdk.duvops.flight;

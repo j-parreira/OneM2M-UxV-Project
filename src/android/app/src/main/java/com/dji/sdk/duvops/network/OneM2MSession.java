@@ -42,6 +42,7 @@
  * O backoff reinicia quando a sessão fica {@code ready}.
  *
  * @author João Parreira
+ * @author Pedro Barbeiro
  * @version 2.0
  */
 package com.dji.sdk.duvops.network;

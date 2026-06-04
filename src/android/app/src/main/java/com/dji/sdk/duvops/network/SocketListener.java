@@ -5,6 +5,7 @@
  * e notifica o {@link NetworkManager} para encadear a resposta.
  *
  * @author João Parreira
+ * @author Pedro Barbeiro
  * @version 2.0
  */
 package com.dji.sdk.duvops.network;

@@ -12,6 +12,8 @@ callback queue passed in by the UI.
 
 See docs/benchmark-flow.md and docs/ai-context/frontend-dev.md for the
 full run flow and metric definitions.
+
+Authors: João Parreira, Pedro Barbeiro
 """
 import json
 import queue
@@ -249,6 +251,15 @@ def _run_scenario_1(
                 progress_cb(n_delivered, n_delivered, list(records))
 
     finally:
+        # Pause Android telemetry before disconnect so the CSE event loop is not
+        # saturated between runs. At 16 msg/s, TinyDB writes block the CSE asyncio
+        # loop ~97% of the time; without this the next run gets zero notifications.
+        # This mirrors the setup step in _run_scenario_2.
+        try:
+            client.send_command({"command": "setTelemetryRate", "intervalMs": 60000})
+            time.sleep(3.0)
+        except Exception:
+            pass
         client.disconnect()
 
     return records, n_delivered

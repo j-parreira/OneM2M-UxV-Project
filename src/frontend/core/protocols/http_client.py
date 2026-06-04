@@ -12,6 +12,8 @@ HTTP headers per OneM2M TS-0009:
   X-M2M-RI: <request-id>
   X-M2M-RVI: 3
   Content-Type: application/json;ty=<resource-type>
+
+Authors: João Parreira, Pedro Barbeiro
 """
 import json
 import threading

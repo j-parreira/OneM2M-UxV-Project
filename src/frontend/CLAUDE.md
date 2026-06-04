@@ -13,7 +13,7 @@ src/frontend/
 ├── app.py                  ← entry point: python -m streamlit run app.py
 ├── pages/
 │   ├── 1_manual.py         ← controlo manual + telemetria em directo
-│   ├── 2_benchmark.py      ← orquestrador multi-run (1–20 runs/combinação; ping_only S2)
+│   ├── 2_benchmark.py      ← orquestrador single-run por clique; S3 sempre ping-only
 │   └── 3_results.py        ← visualização rápida do último run
 ├── core/
 │   ├── config.py           ← Config dataclass; carrega .env com python-dotenv
@@ -150,6 +150,10 @@ Um `MetricRecord` por mensagem → escrito em CSV em `data/raw/`.
 | Docker Desktop bloqueia UDP de containers → CSE não consegue entregar notificações CoAP (Android RC) | **Corrigido (2026-05-31)**: `CoApProtocolClient.java` usa NanoHTTPD (porta 8182) em vez de Californium CoapServer (UDP). `poa=["http://rc_ip:8182"]`. Mesmo constraint — ambas as pontas usam HTTP para notificações. |
 | HTTP/CoAP callbacks com `CALLBACK_HOST=127.0.0.1` inacessíveis ao CSE container | **Corrigido (2026-05-31)**: `nu` usa `DOCKER_CALLBACK_HOST=host.docker.internal` (TCP reachable). `CALLBACK_HOST` só serve para bind local. |
 | `_ensure_subscription()` falha se Android ainda não se registou | Iniciar Streamlit depois da app Android |
+| S3 ACK ~73% packet loss (primeira versão) | **Corrigido (2026-06-02)**: subscriptions condicionais em `websocket_client.connect()` — só cria `sub-streamlit-tel` se `_telemetry_cb` registado; S3 não cria sub de telemetria e evita 240 notificações/min a congestionar a fila WS do CSE |
+| S3 ACK ~56% packet loss após fix anterior | **Corrigido (2026-06-03)**: `_run_scenario_2` envia `setTelemetryRate(60000)` + `sleep(3)` antes do burst de comandos; telemetria do Android a 4 msg/s bloqueava o event loop asyncio do CSE via writes TinyDB síncronos |
+| Runs S1/S2 seguintes bloqueiam após run a 16 msg/s (0 notificações) | **Corrigido (2026-06-04)**: `_run_scenario_1` envia `setTelemetryRate(60000)` + `sleep(3)` no `finally` antes de `disconnect()`. Sem isto, o Android continua a 16 msg/s entre runs; TinyDB writes bloqueiam o CSE asyncio loop ~97% do tempo e o run seguinte recebe 0 notificações. **Nota de operação:** após sessão de 16 msg/s, reiniciar o CSE (`docker compose restart`) antes de retomar testes. |
+| S2 (16 msg/s): latência crescente 180ms→84s, 69% packet loss | **Resultado de paper, não bug**: ACME CSE v2025.11 com TinyDB entrega notificações WS a ~4.9 msg/s. A 16 msg/s, a fila cresce 11.1 entradas/s → latência linear ao longo do run. Documentar como teto de throughput do CSE. |
 
 ---
 

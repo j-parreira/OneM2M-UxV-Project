@@ -29,6 +29,8 @@ CoAP header overhead (fixed) per RFC 7252:
 
 All async operations run in a private background event loop thread so
 Streamlit's synchronous API is not affected.
+
+Authors: João Parreira, Pedro Barbeiro
 """
 import asyncio
 import json

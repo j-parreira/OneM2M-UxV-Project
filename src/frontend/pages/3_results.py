@@ -6,6 +6,8 @@ and a paper-ready summary view.
 
 Full statistical analysis (confidence intervals, significance tests, figures)
 is performed by src/analysis/scripts/ and notebooks/.
+
+Authors: João Parreira, Pedro Barbeiro
 """
 import json
 from pathlib import Path
