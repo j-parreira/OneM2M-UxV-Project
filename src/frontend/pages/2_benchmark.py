@@ -116,10 +116,11 @@ with col2:
         ack_run_timeout_s = st.number_input(
             "Run timeout (s)",
             min_value=10,
-            max_value=900,
-            value=300,
-            step=10,
-            help="Wall-clock cap. 60 cmds × (10 s ACK timeout + 1 s delay) = 660 s worst case.",
+            max_value=1200,
+            value=600,
+            step=30,
+            help="Wall-clock cap. 60 cmds × (15 s ACK timeout + 1 s delay) = 960 s worst case. "
+                 "WS S3 uses a 10 s warmup drain, so add ~10 s to expected run time.",
         )
 
 with col3:

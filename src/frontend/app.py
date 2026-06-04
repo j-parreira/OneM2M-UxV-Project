@@ -129,25 +129,25 @@ def check_android_ae(cfg) -> tuple[bool, str]:
 
 
 def count_runs(data_raw_dir: Path) -> dict:
-    """Count completed runs per (protocol, scenario[, rate]) from CSV filenames.
+    """Count completed runs per (protocol, paper_scenario) from CSV filenames.
 
-    Handles both old format (<protocol>_s<N>_<YYYYMMDD>_run<NNN>.csv) and new
-    S1-with-rate format (<protocol>_s1_r<rate>_<YYYYMMDD>_run<NNN>.csv).
+    Expects paper-scenario naming: <protocol>_s<1|2|3>_<YYYYMMDD>_run<NNN>.csv
+      S1 — telemetry 4 msg/s
+      S2 — telemetry 16 msg/s
+      S3 — command ping
 
     Returns:
-        dict mapping (protocol, scenario_int, rate_or_None) → count
+        dict mapping (protocol, paper_scenario_int) → count
     """
-    counts: dict[tuple[str, int, int | None], int] = defaultdict(int)
-    # Group 3 (rate) is optional — present for S1 runs only.
+    counts: dict[tuple[str, int], int] = defaultdict(int)
     pattern = re.compile(
-        r"^(websocket|mqtt|http|coap)_s([12])(?:_r(\d+))?_\d{8}_run\d+\.csv$"
+        r"^(websocket|mqtt|http|coap)_s([123])_\d{8}_run\d+\.csv$"
     )
     if data_raw_dir.exists():
         for f in data_raw_dir.glob("*.csv"):
             m = pattern.match(f.name)
             if m:
-                rate = int(m.group(3)) if m.group(3) else None
-                counts[(m.group(1), int(m.group(2)), rate)] += 1
+                counts[(m.group(1), int(m.group(2)))] += 1
     return counts
 
 
@@ -158,11 +158,11 @@ ae_ok, ae_msg = check_android_ae(cfg)
 counts = count_runs(cfg.data_raw_dir)
 
 PROTOCOLS = ["websocket", "mqtt", "http", "coap"]
-S1_RATES = [4, 16]
+PAPER_SCENARIOS = [1, 2, 3]  # S1=4msg/s, S2=16msg/s, S3=ping
 TARGET = 10
 total_runs = sum(counts.values())
-# S1: 2 rates × 4 protocols × 10; S3: 4 protocols × 10 → 120 total.
-needed = len(PROTOCOLS) * (len(S1_RATES) + 1) * TARGET
+# 3 scenarios × 4 protocols × 10 runs = 120 total.
+needed = len(PROTOCOLS) * len(PAPER_SCENARIOS) * TARGET
 
 with col_cse:
     if cse_ok:
@@ -191,24 +191,22 @@ with col_data:
 
 st.divider()
 st.subheader("Data Collection Progress")
+_SCENARIO_LABELS = {1: "S1 (4 msg/s)", 2: "S2 (16 msg/s)", 3: "S3 (ping)"}
+
 st.caption(
     f"Target: {TARGET} runs per (protocol × scenario). "
-    f"S1: 4 msg/s — S2: 16 msg/s — S3: 60 ping cmds at 1/s. "
+    f"S1: telemetry 4 msg/s — S2: telemetry 16 msg/s — S3: 60 ping cmds at 1/s. "
     f"Counts valid CSV files in `{cfg.data_raw_dir}`."
 )
 
 for proto in PROTOCOLS:
-    # S1 — one progress bar per rate
-    rate_cols = st.columns([1] + [3] * len(S1_RATES) + [3])
-    with rate_cols[0]:
+    cols = st.columns([1] + [3] * len(PAPER_SCENARIOS))
+    with cols[0]:
         st.markdown(f"**{proto.upper()}**")
-    for i, rate in enumerate(S1_RATES):
-        n = counts.get((proto, 1, rate), 0)
-        with rate_cols[i + 1]:
-            st.progress(min(1.0, n / TARGET), text=f"S1 r{rate}: {n}/{TARGET}")
-    s3_n = counts.get((proto, 2, None), 0)
-    with rate_cols[-1]:
-        st.progress(min(1.0, s3_n / TARGET), text=f"S3: {s3_n}/{TARGET}")
+    for i, ps in enumerate(PAPER_SCENARIOS):
+        n = counts.get((proto, ps), 0)
+        with cols[i + 1]:
+            st.progress(min(1.0, n / TARGET), text=f"{_SCENARIO_LABELS[ps]}: {n}/{TARGET}")
 
 if st.button("↻ Refresh"):
     st.rerun()

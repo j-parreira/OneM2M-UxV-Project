@@ -80,11 +80,13 @@ Always use `python -m pip install` inside the relevant activated environment.
 
 - **Raw data** → `data/raw/` — never modify these files
 - **Processed data** → `data/processed/`
-- **Filename format:**
-  - Scenario 1: `<protocol>_s1_r<rate>_<YYYYMMDD>_run<NNN>.csv` (rate in msg/s)
-    - Example: `mqtt_s1_r5_20260601_run001.csv`
-  - Scenario 2: `<protocol>_s2_<YYYYMMDD>_run<NNN>.csv`
-    - Example: `http_s2_20260601_run001.csv`
+- **Filename format:** `<protocol>_s<paper_scenario>_<YYYYMMDD>_run<NNN>.csv`
+  - Paper scenario mapping (S1/S2/S3 — no rate suffix in filename):
+    - S1 — telemetry 4 msg/s  → `<protocol>_s1_<YYYYMMDD>_run<NNN>.csv`
+    - S2 — telemetry 16 msg/s → `<protocol>_s2_<YYYYMMDD>_run<NNN>.csv`
+    - S3 — command ping       → `<protocol>_s3_<YYYYMMDD>_run<NNN>.csv`
+  - Examples: `mqtt_s1_20260601_run001.csv`, `http_s3_20260601_run001.csv`
+  - Rate is stored in the JSON sidecar (`rate_msg_s` field), not in the filename
 - Files >10 MB must be in `.gitignore` — do not commit large datasets
 
 ---

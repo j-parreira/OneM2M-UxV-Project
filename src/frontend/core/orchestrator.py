@@ -153,10 +153,20 @@ def run(
 # S3 drain: discards stale ACKs (incl. the setTelemetryRate ACK from setup) and
 # gives the CSE asyncio event loop time to flush any residual TinyDB backlog from
 # a prior telemetry session. Without this, the CSE event loop stays busy delivering
-# backlogged telemetry notifications and delays ACK notifications past the 10 s
-# timeout — observed: 8/60 ACKs lost in WS S3 run 55 s after WS S1 r16.
+# backlogged telemetry notifications and delays ACK notifications past the timeout.
+# — observed: 8/60 ACKs lost in WS S3 run 55 s after WS S1 r16.
+#
+# S3 WS drain is longer (10 s) because ACME CSE delivers WS notifications directly
+# via its asyncio event loop (which competes with TinyDB writes), while MQTT offloads
+# delivery to Mosquitto — making MQTT robust at 3 s but WS needing more settling time.
 _S1_DRAIN_S = 3.0
-_S3_DRAIN_S = 3.0
+_S3_DRAIN_S = 3.0    # MQTT / HTTP / CoAP — Mosquitto buffers isolate asyncio load
+_S3_DRAIN_WS = 10.0  # WebSocket — CSE asyncio delivers directly; needs longer settling
+
+# Per-command ACK timeout for S3. WS notification delivery through ACME CSE asyncio
+# has higher variance than MQTT (Mosquitto-buffered); 15 s captures late-arriving
+# notifications that would be lost with the previous 10 s timeout.
+_ACK_CMD_TIMEOUT_S = 15.0
 
 
 def _drain_stale(q: queue.Queue, drain_s: float) -> int:
@@ -322,12 +332,21 @@ def _run_scenario_2(
         client.send_command({"command": "setTelemetryRate", "intervalMs": 60000})
         # Drain stale ACKs (incl. the setTelemetryRate ACK) and give the CSE asyncio
         # event loop time to flush any TinyDB backlog from a prior telemetry session.
-        # Without this, ACK notifications for early ping commands arrive after the
-        # 10 s timeout (observed: 8/60 undelivered in WS S3 run 55 s after S1 r16).
-        n_stale = _drain_stale(ack_queue, _S3_DRAIN_S)
+        # WS gets a longer drain (_S3_DRAIN_WS) because the CSE delivers WS notifications
+        # directly via asyncio (competes with TinyDB writes), whereas MQTT delegates
+        # to Mosquitto — making MQTT robust at 3 s but WS needing more settling time.
+        drain_s = _S3_DRAIN_WS if run_cfg.protocol == "websocket" else _S3_DRAIN_S
+        n_stale = _drain_stale(ack_queue, drain_s)
         if n_stale:
             print(
-                f"[{time.strftime('%H:%M:%S')}][S3] drained {n_stale} stale ACKs",
+                f"[{time.strftime('%H:%M:%S')}][S3] drained {n_stale} stale ACKs "
+                f"(drain={drain_s:.0f}s, protocol={run_cfg.protocol})",
+                flush=True,
+            )
+        else:
+            print(
+                f"[{time.strftime('%H:%M:%S')}][S3] drain complete "
+                f"({drain_s:.0f}s, protocol={run_cfg.protocol}, 0 stale)",
                 flush=True,
             )
 
@@ -338,7 +357,7 @@ def _run_scenario_2(
                 break
             if time.monotonic() >= run_deadline:
                 print(
-                    f"[{time.strftime('%H:%M:%S')}][S2] timeout after "
+                    f"[{time.strftime('%H:%M:%S')}][S3] run deadline reached after "
                     f"{seq_cmd - 1}/{run_cfg.n_commands} commands",
                     flush=True,
                 )
@@ -375,8 +394,10 @@ def _run_scenario_2(
                 continue
 
             # Wait for the matching ACK; drain stale ACKs from prior commands.
+            # _ACK_CMD_TIMEOUT_S is larger than the old 10 s to accommodate WS's
+            # higher-variance notification delivery through the CSE asyncio event loop.
             remaining_s = max(0.0, run_deadline - time.monotonic())
-            ack_deadline = time.monotonic() + min(10.0, remaining_s)
+            ack_deadline = time.monotonic() + min(_ACK_CMD_TIMEOUT_S, remaining_s)
             ack_con = None
             while time.monotonic() < ack_deadline:
                 try:
@@ -385,7 +406,7 @@ def _run_scenario_2(
                         ack_con = candidate
                         break
                     print(
-                        f"[{time.strftime('%H:%M:%S')}][S2] stale ACK "
+                        f"[{time.strftime('%H:%M:%S')}][S3] stale ACK "
                         f"seq_cmd={candidate.get('seq_cmd')} (want {seq_cmd})",
                         flush=True,
                     )
@@ -406,6 +427,14 @@ def _run_scenario_2(
                 t_recv_ms = t_exec_ms = None
                 latency_ms = None
                 delivered = False
+                # Log individual ACK timeouts to help diagnose WS delivery issues.
+                # If followed immediately by "[S3] stale ACK seq_cmd=N (want N+1)"
+                # in the next command's wait, the ACK arrived just after _ACK_CMD_TIMEOUT_S.
+                print(
+                    f"[{time.strftime('%H:%M:%S')}][S3] seq={seq_cmd} ACK timeout "
+                    f"({_ACK_CMD_TIMEOUT_S:.0f}s) — no matching ACK received",
+                    flush=True,
+                )
 
             records.append(MetricRecord(
                 timestamp_ms=timestamp_ms,

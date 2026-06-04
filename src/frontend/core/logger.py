@@ -5,10 +5,13 @@ software versions, RunConfig params, and operator notes.
 
 Both files are required for paper reproducibility (see benchmark-flow.md §8).
 
-CSV filename format:
-  Scenario 1: <protocol>_s1_r<rate>_<YYYYMMDD>_run<NNN>.csv
-              (rate = msg/s integer, e.g. r5 for 5 msg/s)
-  Scenario 2: <protocol>_s2_<YYYYMMDD>_run<NNN>.csv
+CSV filename format (paper scenario numbers):
+  <protocol>_s<paper_scenario>_<YYYYMMDD>_run<NNN>.csv
+
+  Paper scenario mapping:
+    S1 — telemetry 4 msg/s   (internal: scenario=1, rate=4)
+    S2 — telemetry 16 msg/s  (internal: scenario=1, rate=16)
+    S3 — command ping (1/s)  (internal: scenario=2)
 
 JSON sidecar: <same_stem>.json
 
@@ -66,36 +69,57 @@ _CSV_COLUMNS = [
 ]
 
 
+def _paper_scenario_num(scenario: int, rate_msg_s: Optional[int]) -> int:
+    """Map internal (scenario, rate_msg_s) to paper scenario number (1/2/3).
+
+    Paper mapping:
+      S1 — telemetry 4 msg/s   (internal: scenario=1, rate=4)
+      S2 — telemetry 16 msg/s  (internal: scenario=1, rate=16)
+      S3 — command ping (1/s)  (internal: scenario=2)
+
+    Parameters
+    ----------
+    scenario    : int — internal scenario number (1=telemetry, 2=ping)
+    rate_msg_s  : int or None — msg/s for Scenario 1; None for Scenario 2
+
+    Returns
+    -------
+    int: 1, 2, or 3
+    """
+    if scenario == 2:
+        return 3
+    # scenario == 1: distinguish by rate
+    if rate_msg_s is not None and rate_msg_s >= 16:
+        return 2
+    return 1
+
+
 def next_run_id(
     protocol: str,
     scenario: int,
     data_raw_dir: Path,
     rate_msg_s: Optional[int] = None,
 ) -> str:
-    """Return the next unused run ID for a given (protocol, scenario[, rate]) tuple.
+    """Return the next unused run ID for a given (protocol, paper_scenario) tuple.
 
+    Uses paper scenario numbers (S1/S2/S3) in the filename — no rate suffix.
     Counts existing CSV files in data_raw_dir matching the pattern and
-    increments the run counter. For Scenario 1, the rate is encoded in the
-    filename (e.g. ``_r4_`` or ``_r16_``) so runs at different rates are
-    counted independently and are unambiguous without opening the JSON sidecar.
+    increments the run counter.
 
     Parameters
     ----------
-    protocol : str
-    scenario : int
-    data_raw_dir : Path
-    rate_msg_s : int or None
-        Required for Scenario 1 (e.g. 4 or 16 msg/s). Ignored for Scenario 2.
+    protocol    : str
+    scenario    : int — internal scenario number (1=telemetry, 2=ping)
+    data_raw_dir: Path
+    rate_msg_s  : int or None — required for Scenario 1 to select S1 vs S2
 
     Returns
     -------
-    str, e.g. 'websocket_s1_r4_20260601_run003' or 'http_s2_20260601_run001'
+    str, e.g. 'websocket_s1_20260601_run003' or 'http_s3_20260601_run001'
     """
+    paper_s = _paper_scenario_num(scenario, rate_msg_s)
     date_str = time.strftime("%Y%m%d")
-    if scenario == 1 and rate_msg_s is not None:
-        stem_prefix = f"{protocol}_s{scenario}_r{rate_msg_s}_{date_str}_run"
-    else:
-        stem_prefix = f"{protocol}_s{scenario}_{date_str}_run"
+    stem_prefix = f"{protocol}_s{paper_s}_{date_str}_run"
     existing = sorted(data_raw_dir.glob(f"{stem_prefix}*.csv")) if data_raw_dir.exists() else []
     n = len(existing) + 1
     return f"{stem_prefix}{n:03d}"
@@ -150,8 +174,10 @@ def save_run(
     sidecar = {
         "run_id": run_id,
         "protocol": protocol,
+        # Paper scenario number (1/2/3); internal scenario preserved in run_config.
+        "paper_scenario": _paper_scenario_num(scenario, rc.get("rate_msg_s")),
         "scenario": scenario,
-        # S1: rate in msg/s; S2: None.  Directly accessible without parsing run_config.
+        # S1: rate in msg/s; S2/S3: None.  Directly accessible without parsing run_config.
         "rate_msg_s": rc.get("rate_msg_s"),
         "duration_s": rc.get("duration_s"),
         # Hardware / software metadata required for the paper Methods section.

@@ -304,14 +304,21 @@ class WebSocketClient(ProtocolClient):
         # e.g. '/id-in/subBPiTR1sRvs'. Match against the ri captured at connect time.
         is_tel = self._tel_sub_ri is not None and self._tel_sub_ri in sur
         is_ack = self._ack_sub_ri is not None and self._ack_sub_ri in sur
-        # Only log ACK notifications and unmatched ones — telemetry is too frequent to log every CIN.
-        if is_ack or (not is_tel and not is_ack):
-            print(f"[{time.strftime('%H:%M:%S')}][WS] notify sur={sur!r} is_tel={is_tel} is_ack={is_ack}", flush=True)
+        # Log unmatched notifications — useful if ack_sub_ri is None or sur format changes.
+        if not is_tel and not is_ack:
+            print(f"[{time.strftime('%H:%M:%S')}][WS] UNMATCHED notify sur={sur!r} tel_ri={self._tel_sub_ri!r} ack_ri={self._ack_sub_ri!r}", flush=True)
 
         try:
             con = json.loads(con_raw) if isinstance(con_raw, str) else con_raw
         except (json.JSONDecodeError, TypeError):
             return
+
+        # Log ACK notification arrival with seq_cmd for timeout correlation.
+        # Cross-reference with "[S3] seq=N ACK timeout" in orchestrator logs to see
+        # if the ACK arrived after the _ACK_CMD_TIMEOUT_S deadline.
+        if is_ack:
+            seq_cmd = con.get("seq_cmd") if isinstance(con, dict) else "?"
+            print(f"[{time.strftime('%H:%M:%S')}][WS] ACK notification seq_cmd={seq_cmd}", flush=True)
 
         if is_tel and self._telemetry_cb:
             try:
