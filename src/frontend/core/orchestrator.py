@@ -22,6 +22,8 @@ import time
 from dataclasses import dataclass, asdict
 from typing import Callable, Optional
 
+import requests
+
 from .config import Config
 from .logger import MetricRecord, next_run_id, save_run
 from .protocols.base import ProtocolClient
@@ -253,11 +255,12 @@ def _run_scenario_1(
     finally:
         # Pause Android telemetry before disconnect so the CSE event loop is not
         # saturated between runs. At 16 msg/s, TinyDB writes block the CSE asyncio
-        # loop ~97% of the time; without this the next run gets zero notifications.
-        # This mirrors the setup step in _run_scenario_2.
+        # loop ~97% of the time; a blind sleep(3) is not enough — we wait until the
+        # CSE health check returns fast (<300 ms) to confirm the queue has drained.
         try:
             client.send_command({"command": "setTelemetryRate", "intervalMs": 60000})
-            time.sleep(3.0)
+            time.sleep(3.0)  # let rate-change propagate before polling
+            _wait_for_cse_recovery(config)
         except Exception:
             pass
         client.disconnect()
@@ -311,6 +314,10 @@ def _run_scenario_2(
         client.send_command({"command": "setTelemetryRate", "intervalMs": 60000})
         # Wait for the rate change to propagate and any in-flight telemetry CINs to settle.
         time.sleep(3.0)
+        # Ensure the CSE is healthy before the command burst — after S1 at 16 msg/s the
+        # TinyDB queue may still be draining, causing CIN creation to take 6–7 s (exceeds
+        # the 10 s ACK timeout). Block here until GET /id-in returns in < 300 ms.
+        _wait_for_cse_recovery(config)
         # Drain the setup command's ACK (seq_cmd defaults to 0 on Android) so the
         # main loop doesn't see a spurious entry while waiting for seq_cmd=1.
         while True:
@@ -400,6 +407,9 @@ def _run_scenario_2(
                 t_recv_ms = ack_con.get("t_recv_ms")
                 t_exec_ms = ack_con.get("t_exec_ms")
                 # End-to-end latency: Android receive minus Streamlit send (NTP-dependent).
+                # Negative values indicate the RC clock is behind the dev-machine clock
+                # (clock offset, not real negative latency). Raw value kept so the analysis
+                # phase can detect and correct the offset. Typical offset ≈ −1.88 s.
                 # Null when t_recv_ms not returned — do NOT fall back to cin_create_ms,
                 # which measures a different path (Streamlit→CSE only).
                 latency_ms: Optional[float] = (
@@ -443,6 +453,42 @@ def _run_scenario_2(
         client.disconnect()
 
     return records, n_delivered
+
+
+def _wait_for_cse_recovery(config: Config, max_wait_s: float = 120.0, target_rtt_ms: float = 300.0) -> None:
+    """Poll the CSE health endpoint until it responds fast enough.
+
+    After S1 runs at 16 msg/s, the ACME CSE TinyDB write queue takes ~135 s to
+    drain at its native 4.9 notifications/s rate. A blind sleep(3) is not enough.
+    This helper blocks until a GET /id-in round-trip is < target_rtt_ms, which
+    indicates the asyncio event loop is no longer dominated by TinyDB writes.
+
+    Uses HTTP regardless of the current benchmark protocol — always reachable.
+
+    Parameters
+    ----------
+    config       : Config  — provides CSE host and HTTP port
+    max_wait_s   : float   — give up and continue after this many seconds
+    target_rtt_ms: float   — consider CSE healthy once GET returns in < this
+    """
+    url = f"http://{config.cse_host}:{config.cse_http_port}/id-in"
+    headers = {"X-M2M-RI": "health-check", "Accept": "application/json"}
+    t_end = time.monotonic() + max_wait_s
+    while time.monotonic() < t_end:
+        try:
+            t0 = time.monotonic()
+            requests.get(url, headers=headers, timeout=2.0)
+            rtt_ms = (time.monotonic() - t0) * 1000
+            if rtt_ms < target_rtt_ms:
+                return
+            print(
+                f"[{time.strftime('%H:%M:%S')}][CSE-health] rtt={rtt_ms:.0f} ms — still recovering…",
+                flush=True,
+            )
+        except Exception as exc:
+            print(f"[{time.strftime('%H:%M:%S')}][CSE-health] error: {exc}", flush=True)
+        time.sleep(2.0)
+    print(f"[{time.strftime('%H:%M:%S')}][CSE-health] max_wait_s={max_wait_s}s reached — continuing anyway", flush=True)
 
 
 def _rate_to_interval_ms(rate_msg_s: int) -> int:
