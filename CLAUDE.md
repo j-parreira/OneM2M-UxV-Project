@@ -272,17 +272,52 @@ The Android app is configured with the CSE IP via a settings screen — no hardc
 
 ### Benchmark Run Procedure (inter-run isolation)
 
-After a S2 (16 msg/s) session, the ACME CSE TinyDB may have residual state that degrades
-subsequent runs. Between benchmark sessions (not individual runs within a session):
+#### ACME CSE v2025.11 TinyDB throughput ceiling
+
+ACME CSE v2025.11 processes notifications synchronously inside a single asyncio event loop.
+TinyDB writes block the loop, capping effective notification throughput at **≈ 4.9 msg/s**.
+
+At 16 msg/s (S2) this creates a sustained surplus:
+
+| Metric | Value |
+|---|---|
+| Input rate (S2) | 16.0 msg/s |
+| CSE delivery ceiling | ~4.9 msg/s |
+| Queue growth rate | ~11.1 entries/s |
+| Notifications queued after 60 s | ~666 |
+| Time to drain at 4.9 msg/s | ~136 s |
+
+The orchestrator inserts a 3 s drain at run start (`_S1_DRAIN_S = 3.0`) which clears only
+~15 entries — insufficient after an S2 run.
+
+#### Cross-run contamination rules
+
+**`docker compose restart` is required before every S2 run.**
+
+| Transition | Contamination mechanism | Action |
+|---|---|---|
+| S2 → S1 | Stale telemetry arrives during S1 window; `t_send_ms` 60–180 s old → `latency_ms` inflated by 60,000–180,000 ms | Restart CSE |
+| S2 → S2 | TinyDB delivers stale run N notifications during run N+1 (FIFO); run N+1 may deliver zero of its own notifications | Restart CSE |
+| S2 → S3 | Stale telemetry congests CSE asyncio; first ~9 commands show `cin_create_ms` = 6–7 s | Restart CSE (or keep as paper result for CSE recovery characterisation) |
+| S1 → any | 4 msg/s ≤ ceiling; no backlog | No restart |
+| S3 → any | 1 cmd/s; no backlog | No restart |
 
 ```powershell
-# From src/cse/
+# From src/cse/ — run before every S2 run
 docker compose restart
+# Confirm healthy before re-opening Streamlit:
+curl http://localhost:8080/id-in -H "X-M2M-RI: t" -H "X-M2M-Origin: CAdmin" -H "X-M2M-RVI: 3"
 ```
 
-This clears the CSE's in-memory notification queue and TinyDB state.
-Within a session, runs are isolated by `setTelemetryRate(60000)` sent automatically at end of
-each S1/S2 run (in `orchestrator._run_scenario_1`) — no manual restart needed between runs.
+#### Recommended data collection order
+
+1. All **S3** runs — 4 protocols × 10 runs (no restart between runs)
+2. All **S1** runs — 4 protocols × 10 runs (no restart between runs)
+3. **S2** runs — `docker compose restart` before each individual run
+
+Within a session, the orchestrator sends `setTelemetryRate(60000)` at the end of each S1/S2
+run (`orchestrator._run_scenario_1` finally block) to stop Android telemetry between runs.
+This prevents new CINs from being created but does not clear the existing TinyDB backlog.
 
 ---
 

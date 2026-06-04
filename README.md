@@ -58,10 +58,44 @@ Packet loss derived from gaps in the Android `seq` counter.
 
 Same as S1 at 16 msg/s (62 ms interval). Simulates 4 simultaneous drones.
 
-> **Expected result:** ACME CSE v2025.11 TinyDB ceiling ≈ 4.9 notifications/s.
-> At 16 msg/s the queue grows at 11.1 entries/s → ~69 % packet loss and linearly growing
-> latency (180 ms → 84 s) over the 60 s run. This is the paper result, not a bug.
-> Run `docker compose restart` between S2 sessions to clear the TinyDB backlog.
+**Expected result — ACME CSE v2025.11 TinyDB throughput ceiling:**
+
+ACME CSE v2025.11 uses TinyDB (a file-based Python store) for persistence. Notification
+delivery is processed synchronously inside the CSE's single asyncio event loop. Under load,
+TinyDB writes block the loop and cap effective notification throughput at **≈ 4.9 msg/s**
+regardless of incoming rate.
+
+At 16 msg/s this creates a sustained surplus of **11.1 notifications/s**:
+
+| Quantity | Value |
+|---|---|
+| Input rate | 16.0 msg/s |
+| CSE delivery ceiling | ~4.9 msg/s |
+| Queue growth rate | ~11.1 entries/s |
+| Notifications queued after 60 s run | ~666 |
+| Time to clear queue at 4.9 msg/s | ~136 s |
+| 3 s drain at run start clears | ~15 entries |
+
+**Observed effects during S2 (60 s run):**
+- Packet loss ≈ 69 % (notifications queued faster than delivered)
+- `latency_ms` grows linearly: 180 ms → 84 s as queue depth increases
+- This is the paper result, not a bug — it characterises the CSE throughput ceiling
+
+**Cross-run contamination (critical for data quality):**
+
+The ~666 queued notifications persist in TinyDB across runs. Without a CSE restart:
+- **S2 → S1:** Stale telemetry arrives during the S1 measurement window with
+  `t_send_ms` from 60–180 s ago → `latency_ms` inflated by 60,000–180,000 ms.
+  Empirically measured: `latency_ms` mean = 90,090 ms on contaminated run.
+- **S2 → S2:** CSE delivers stale run N notifications during run N+1 measurement
+  (stale notifications are processed first, FIFO). Run N+1 may deliver zero of its
+  own notifications within the 60 s window. Data is invalid.
+- **S2 → S3:** Stale telemetry congests the CSE asyncio loop during S3 command window.
+  First ~9 commands show `cin_create_ms` = 6–7 s (vs. 125–172 ms normal).
+  Documented as a paper result showing CSE recovery time.
+
+> **`docker compose restart` is required before every S2 run.**
+> After an S2 run, wait for the CSE to be healthy before starting the next run.
 
 ### S3 — Command ping (1 cmd/s)
 
@@ -285,18 +319,40 @@ Docker Desktop uses WSL2 in **mirrored networking mode** (`networkingMode=mirror
    `data/raw/<protocol>_s<N>_<YYYYMMDD>_run<NNN>.csv` + companion `.json` sidecar
 4. Repeat until 10 runs per (protocol × scenario)
 
-### Between sessions
+### Inter-run isolation
 
-After an S2 (16 msg/s) session, the CSE TinyDB accumulates a notification backlog that
-degrades subsequent runs. Restart before starting a new session:
+After every S2 run (16 msg/s), **restart the CSE before the next run** regardless of scenario
+or protocol. The ~666 notifications queued in TinyDB take ~136 s to clear at the CSE's 4.9/s
+ceiling — far longer than the 3 s drain the orchestrator performs at run start.
 
 ```bash
 cd src/cse
 docker compose restart
+# wait for health check before opening Streamlit
+curl http://localhost:8080/id-in -H "X-M2M-RI: t" -H "X-M2M-Origin: CAdmin" -H "X-M2M-RVI: 3"
 ```
 
+After S1 or S3 runs no restart is needed — neither generates a backlog (4 msg/s ≤ 4.9/s
+ceiling for S1; 1 cmd/s for S3).
+
+**Contamination risk by transition:**
+
+| Transition | Risk | Action |
+|---|---|---|
+| S2 → S1 | Stale telemetry inflates `latency_ms` by 60–180 s | Restart CSE |
+| S2 → S2 | Stale run N notifications delivered during run N+1 (data invalid) | Restart CSE |
+| S2 → S3 | First ~9 commands slow (6–7 s) from asyncio congestion | Restart CSE (or document as paper result) |
+| S1 → any | No backlog (4 msg/s ≤ ceiling) | No restart needed |
+| S3 → any | No backlog (1 cmd/s) | No restart needed |
+
+**Recommended data collection order** to minimise restarts:
+
+1. All **S3** runs — 4 protocols × 10 runs (no restart between)
+2. All **S1** runs — 4 protocols × 10 runs (no restart between)
+3. **S2** runs — restart CSE before each individual run
+
 Within a session, the orchestrator automatically sends `setTelemetryRate(60000)` at the end
-of each S1/S2 run and drains stale notifications at the start of each run.
+of each S1/S2 run to stop the Android from pushing telemetry between runs.
 
 ### Data files
 
