@@ -142,14 +142,21 @@ def run(
 # Scenario implementations
 # ------------------------------------------------------------------
 
-# Warmup window (seconds) at the start of S1 runs: discards stale CSE notifications
-# that predate this run. The ACME CSE TinyDB queue persists across connections — on
-# reconnect the CSE replays any backlogged notifications. Without this drain window,
-# a previous high-rate session causes the next run to receive hundreds of stale CINs
-# (observed: run002 received 421/240, mean latency 96 s after an uncleared backlog).
-# 3 s is conservative: at 4 msg/s the CSE delivers all pending items in ≤ 3 s
-# assuming no severe backlog. For 16 msg/s sessions, do `docker compose restart` first.
+# Warmup drain windows (seconds) at the start of each scenario.
+#
+# S1 drain: discards stale telemetry notifications from the CSE TinyDB queue that
+# predate this run. At reconnect the CSE replays any backlogged notifications —
+# observed: run002 received 421/240, mean latency 96 s after an uncleared backlog.
+# 3 s covers normal inter-run backlog at 4 msg/s; for 16 msg/s sessions do
+# `docker compose restart` first.
+#
+# S3 drain: discards stale ACKs (incl. the setTelemetryRate ACK from setup) and
+# gives the CSE asyncio event loop time to flush any residual TinyDB backlog from
+# a prior telemetry session. Without this, the CSE event loop stays busy delivering
+# backlogged telemetry notifications and delays ACK notifications past the 10 s
+# timeout — observed: 8/60 ACKs lost in WS S3 run 55 s after WS S1 r16.
 _S1_DRAIN_S = 3.0
+_S3_DRAIN_S = 3.0
 
 
 def _drain_stale(q: queue.Queue, drain_s: float) -> int:
@@ -260,7 +267,11 @@ def _run_scenario_1(
             n_delivered += 1
 
             if progress_cb:
-                progress_cb(n_delivered, n_delivered, list(records))
+                # Pass time-based expected count so the UI can show real packet loss.
+                # elapsed_s = how many seconds of the 60 s window have actually passed.
+                elapsed_s = run_cfg.duration_s - max(0.0, t_deadline - time.monotonic())
+                n_expected_so_far = int((run_cfg.rate_msg_s or 1) * elapsed_s)
+                progress_cb(n_delivered, n_expected_so_far, list(records))
 
     finally:
         # Pause Android telemetry before disconnect so the CSE event loop is not
@@ -309,12 +320,16 @@ def _run_scenario_2(
         # Reduce Android telemetry to near-zero: concurrent TinyDB writes block
         # the CSE asyncio event loop and inflate ACK notification latency.
         client.send_command({"command": "setTelemetryRate", "intervalMs": 60000})
-        # Drain the setup command's ACK so seq_cmd=1 doesn't see a spurious entry.
-        while True:
-            try:
-                ack_queue.get_nowait()
-            except queue.Empty:
-                break
+        # Drain stale ACKs (incl. the setTelemetryRate ACK) and give the CSE asyncio
+        # event loop time to flush any TinyDB backlog from a prior telemetry session.
+        # Without this, ACK notifications for early ping commands arrive after the
+        # 10 s timeout (observed: 8/60 undelivered in WS S3 run 55 s after S1 r16).
+        n_stale = _drain_stale(ack_queue, _S3_DRAIN_S)
+        if n_stale:
+            print(
+                f"[{time.strftime('%H:%M:%S')}][S3] drained {n_stale} stale ACKs",
+                flush=True,
+            )
 
         run_deadline = time.monotonic() + run_cfg.ack_run_timeout_s
 

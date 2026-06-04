@@ -106,12 +106,28 @@ class MqttClient(ProtocolClient):
 
         print(f"[{time.strftime('%H:%M:%S')}][MQTT] connected — registering AE and subscriptions", flush=True)
         self._register_ae()
-        self._tel_sub_ri = self._ensure_subscription("cse-in/uxv/telemetry", _SUB_TEL_RN)
-        self._ack_sub_ri = self._ensure_subscription("cse-in/uxv/ack", _SUB_ACK_RN)
-        if self._tel_sub_ri is None:
-            print(f"[{time.strftime('%H:%M:%S')}][MQTT] WARNING: telemetry subscription ri not captured", flush=True)
-        if self._ack_sub_ri is None:
-            print(f"[{time.strftime('%H:%M:%S')}][MQTT] WARNING: ack subscription ri not captured", flush=True)
+
+        # Mirror WebSocket behaviour: only subscribe to resources that have a
+        # registered callback. Creating unnecessary subscriptions causes the CSE to
+        # deliver notifications (consuming the asyncio event loop) with no benefit.
+        # For S3 (no telemetry callback) this prevents stale telemetry notifications
+        # from delaying ACK notifications — same root cause as the WS fix.
+        if self._telemetry_cb is not None:
+            self._tel_sub_ri = self._ensure_subscription("cse-in/uxv/telemetry", _SUB_TEL_RN)
+            if self._tel_sub_ri is None:
+                print(f"[{time.strftime('%H:%M:%S')}][MQTT] WARNING: telemetry subscription ri not captured", flush=True)
+        else:
+            self._delete_resource(f"cse-in/uxv/telemetry/{_SUB_TEL_RN}")
+            self._tel_sub_ri = None
+
+        if self._ack_cb is not None:
+            self._ack_sub_ri = self._ensure_subscription("cse-in/uxv/ack", _SUB_ACK_RN)
+            if self._ack_sub_ri is None:
+                print(f"[{time.strftime('%H:%M:%S')}][MQTT] WARNING: ack subscription ri not captured", flush=True)
+        else:
+            self._delete_resource(f"cse-in/uxv/ack/{_SUB_ACK_RN}")
+            self._ack_sub_ri = None
+
         print(f"[{time.strftime('%H:%M:%S')}][MQTT] tel_sub_ri={self._tel_sub_ri}  ack_sub_ri={self._ack_sub_ri}", flush=True)
 
     def send_command(self, payload: dict) -> tuple[float | None, bool]:

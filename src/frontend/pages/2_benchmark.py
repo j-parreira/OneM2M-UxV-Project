@@ -51,7 +51,10 @@ with col_s2:
     st.info(
         "**S2 — Telemetry 16 msg/s**\n\n"
         "Same as S1 at **16 msg/s** (62 ms) for **1 min**. Simulates 4 simultaneous drones.\n\n"
-        "**Measures:** same as S1, higher load."
+        "**Measures:** same as S1, higher load.\n\n"
+        "⚠️ **Expected:** ACME CSE v2025.11 TinyDB ceiling ≈ 4.9 msg/s → "
+        "~64 % packet loss at 16 msg/s is the paper result, not a bug. "
+        "Latency grows linearly as the CSE queue builds. Run completes the full 60 s."
     )
 
 with col_s3:
@@ -218,11 +221,13 @@ if st.session_state.bench_running:
     st.subheader("Running…")
 
     if scenario == 1:
-        expected = (rate_msg_s or 1) * duration_s
-        st.progress(min(1.0, n_del / max(expected, 1)))
+        expected_total = (rate_msg_s or 1) * duration_s
+        # n_tot from progress_cb = time-based expected so far (rate × elapsed_s),
+        # so loss = n_tot - n_del is meaningful during the run.
+        st.progress(min(1.0, n_del / max(expected_total, 1)))
         ca, cb, cc = st.columns(3)
         ca.metric("Received", n_del)
-        cb.metric("Expected", expected)
+        cb.metric("Expected (run total)", expected_total)
         cc.metric("Loss so far", max(0, n_tot - n_del))
     else:
         st.progress(min(1.0, n_tot / max(n_commands, 1)))
