@@ -47,7 +47,7 @@ class RunConfig:
     # 60 cmds × (10 s + 1 s) = 660 s worst case; 600 s is a safe ceiling for normal conditions.
     ack_run_timeout_s: int = 600
     # Scenario 2: delay between consecutive commands (ms), applied after each ACK.
-    # 1000 ms ≈ 1 cmd/s; 120 cmds × 1 s ≈ 2 min per run.
+    # 1000 ms ≈ 1 cmd/s; 60 cmds × 1 s ≈ 1 min per run.
     inter_command_delay_ms: int = 1000
     run_id: str = ""        # auto-generated if empty
     notes: str = ""         # operator notes for the JSON sidecar

@@ -261,6 +261,12 @@ When running the full system:
 
 The Android app is configured with the CSE IP via a settings screen — no hardcoded IP.
 
+### Benchmark Design
+
+- **10 runs per scenario per protocol** — 10 × 3 scenarios × 4 protocols = 120 total runs
+- **1 minute per run** — S1/S2: 60 s telemetry; S3: 60 ping commands at 1/s
+- Protocol and scenario are selected in the UI; run ID is auto-incremented
+
 ### Benchmark Run Procedure (inter-run isolation)
 
 After a S2 (16 msg/s) session, the ACME CSE TinyDB may have residual state that degrades

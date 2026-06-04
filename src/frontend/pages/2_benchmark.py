@@ -3,9 +3,11 @@
 Runs one benchmark run per click, writes CSV + JSON sidecar to data/raw/.
 
 Scenarios (paper mapping):
-  S1 — Telemetry 4 msg/s  (internal scenario=1, rate=4,  duration=120 s)
-  S2 — Telemetry 16 msg/s (internal scenario=1, rate=16, duration=120 s)
-  S3 — Command ping       (internal scenario=2, 120 cmds, 1 cmd/s)
+  S1 — Telemetry 4 msg/s  (internal scenario=1, rate=4,  duration=60 s)
+  S2 — Telemetry 16 msg/s (internal scenario=1, rate=16, duration=60 s)
+  S3 — Command ping       (internal scenario=2, 60 cmds, 1 cmd/s)
+
+Each scenario is run 10 times per protocol (10 runs × 3 scenarios × 4 protocols = 120 total).
 
 See docs/benchmark-flow.md for the full experimental workflow.
 
@@ -41,21 +43,21 @@ with col_s1:
     st.info(
         "**S1 — Telemetry 4 msg/s**\n\n"
         "Drone hovers. Android pushes telemetry CINs at **4 msg/s** (250 ms) "
-        "for 2 min. Rate set via `setTelemetryRate` at run start.\n\n"
+        "for **1 min**. Rate set via `setTelemetryRate` at run start.\n\n"
         "**Measures:** latency (`timestamp_ms − t_send_ms`), packet loss, overhead."
     )
 
 with col_s2:
     st.info(
         "**S2 — Telemetry 16 msg/s**\n\n"
-        "Same as S1 at **16 msg/s** (62 ms). Simulates 4 simultaneous drones.\n\n"
+        "Same as S1 at **16 msg/s** (62 ms) for **1 min**. Simulates 4 simultaneous drones.\n\n"
         "**Measures:** same as S1, higher load."
     )
 
 with col_s3:
     st.info(
         "**S3 — Command ping (1 cmd/s)**\n\n"
-        "Dashboard sends 120 `ping` commands at 1/s. Android ACKs each "
+        "Dashboard sends **60 `ping`** commands at 1/s (1 min). Android ACKs each "
         "immediately (no DJI SDK action). Measures pure protocol latency.\n\n"
         "**Measures:** `cin_create_ms` (NTP-free), `t_recv_ms − t_cmd_ms` (NTP), "
         "delivery rate within 10 s timeout."
@@ -85,7 +87,7 @@ with col1:
 
 with col2:
     if scenario == 1:
-        duration_s = st.number_input("Duration (s)", min_value=10, max_value=600, value=120, step=10)
+        duration_s = st.number_input("Duration (s)", min_value=10, max_value=600, value=60, step=10)
         n_commands = (rate_msg_s or 1) * duration_s
         ack_run_timeout_s = 600
         inter_command_delay_ms = 0
@@ -97,8 +99,8 @@ with col2:
             "Commands to send",
             min_value=1,
             max_value=500,
-            value=120,
-            help="120 cmds × 1 s delay ≈ 2 min per run.",
+            value=60,
+            help="60 cmds × 1 s delay ≈ 1 min per run.",
         )
         inter_command_delay_ms = st.number_input(
             "Inter-command delay (ms)",
@@ -112,9 +114,9 @@ with col2:
             "Run timeout (s)",
             min_value=10,
             max_value=900,
-            value=600,
+            value=300,
             step=10,
-            help="Wall-clock cap. 120 cmds × (10 s ACK timeout + 1 s delay) = 1320 s worst case.",
+            help="Wall-clock cap. 60 cmds × (10 s ACK timeout + 1 s delay) = 660 s worst case.",
         )
 
 with col3:
