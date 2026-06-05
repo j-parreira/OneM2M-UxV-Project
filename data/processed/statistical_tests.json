@@ -2,23 +2,88 @@
   {
     "metric": "lat_mean",
     "group": "S1",
-    "n_protocols": 2,
+    "n_protocols": 4,
     "n_per_protocol": {
+      "coap": 10,
+      "http": 10,
       "mqtt": 10,
       "websocket": 10
     },
     "kruskal_wallis": {
-      "H": 14.285714285714278,
-      "p": 0.00015705228423075227,
+      "H": 35.26829268292684,
+      "p": 1.0691737953962606e-07,
       "significant": true
     },
     "dunn_pvalues": {
-      "mqtt_vs_websocket": 0.00015705228423075119
+      "coap_vs_http": 0.7558269784633869,
+      "coap_vs_mqtt": 0.0016731496442482317,
+      "coap_vs_websocket": 1.7445000275702263e-07,
+      "http_vs_mqtt": 0.21226903177712145,
+      "http_vs_websocket": 0.0003540626661734514,
+      "mqtt_vs_websocket": 0.3346956522410648
     },
     "cliffs_delta": {
+      "coap_vs_http": {
+        "delta": 0.8,
+        "magnitude": "large"
+      },
+      "coap_vs_mqtt": {
+        "delta": 1.0,
+        "magnitude": "large"
+      },
+      "coap_vs_websocket": {
+        "delta": 1.0,
+        "magnitude": "large"
+      },
+      "http_vs_mqtt": {
+        "delta": 1.0,
+        "magnitude": "large"
+      },
+      "http_vs_websocket": {
+        "delta": 1.0,
+        "magnitude": "large"
+      },
       "mqtt_vs_websocket": {
         "delta": 1.0,
         "magnitude": "large"
+      }
+    },
+    "mann_whitney_holm": {
+      "coap_vs_mqtt": {
+        "U": 100.0,
+        "raw_p": 0.00018267179110955002,
+        "holm_p": 0.0010960307466573002,
+        "significant": true
+      },
+      "coap_vs_websocket": {
+        "U": 100.0,
+        "raw_p": 0.00018267179110955002,
+        "holm_p": 0.0010960307466573002,
+        "significant": true
+      },
+      "http_vs_mqtt": {
+        "U": 100.0,
+        "raw_p": 0.00018267179110955002,
+        "holm_p": 0.0010960307466573002,
+        "significant": true
+      },
+      "http_vs_websocket": {
+        "U": 100.0,
+        "raw_p": 0.00018267179110955002,
+        "holm_p": 0.0010960307466573002,
+        "significant": true
+      },
+      "mqtt_vs_websocket": {
+        "U": 100.0,
+        "raw_p": 0.00018267179110955002,
+        "holm_p": 0.0010960307466573002,
+        "significant": true
+      },
+      "coap_vs_http": {
+        "U": 90.0,
+        "raw_p": 0.0028272720911168077,
+        "holm_p": 0.0028272720911168077,
+        "significant": true
       }
     },
     "metric_label": "mean_latency_ms"
@@ -26,65 +91,355 @@
   {
     "metric": "lat_std",
     "group": "S1",
-    "n_protocols": 2,
+    "n_protocols": 4,
     "n_per_protocol": {
+      "coap": 10,
+      "http": 10,
       "mqtt": 10,
       "websocket": 10
     },
     "kruskal_wallis": {
-      "H": 3.2914285714285683,
-      "p": 0.0696424047983281,
-      "significant": false
+      "H": 16.094634146341463,
+      "p": 0.0010844319881677701,
+      "significant": true
     },
-    "note": "Kruskal-Wallis not significant -- no post-hoc performed",
+    "dunn_pvalues": {
+      "coap_vs_http": 0.0014414628808367771,
+      "coap_vs_mqtt": 0.013263901098869386,
+      "coap_vs_websocket": 0.6487299623042552,
+      "http_vs_mqtt": 1.0,
+      "http_vs_websocket": 0.23311337050073805,
+      "mqtt_vs_websocket": 0.8762187518025764
+    },
+    "cliffs_delta": {
+      "coap_vs_http": {
+        "delta": -0.82,
+        "magnitude": "large"
+      },
+      "coap_vs_mqtt": {
+        "delta": -0.8,
+        "magnitude": "large"
+      },
+      "coap_vs_websocket": {
+        "delta": -0.56,
+        "magnitude": "large"
+      },
+      "http_vs_mqtt": {
+        "delta": 0.26,
+        "magnitude": "small"
+      },
+      "http_vs_websocket": {
+        "delta": 0.58,
+        "magnitude": "large"
+      },
+      "mqtt_vs_websocket": {
+        "delta": 0.48,
+        "magnitude": "large"
+      }
+    },
+    "mann_whitney_holm": {
+      "coap_vs_http": {
+        "U": 9.0,
+        "raw_p": 0.0022022199424970783,
+        "holm_p": 0.013213319654982469,
+        "significant": true
+      },
+      "coap_vs_mqtt": {
+        "U": 10.0,
+        "raw_p": 0.0028272720911168077,
+        "holm_p": 0.014136360455584038,
+        "significant": true
+      },
+      "http_vs_websocket": {
+        "U": 79.0,
+        "raw_p": 0.031209012771740218,
+        "holm_p": 0.12483605108696087,
+        "significant": false
+      },
+      "coap_vs_websocket": {
+        "U": 22.0,
+        "raw_p": 0.03763531378731424,
+        "holm_p": 0.12483605108696087,
+        "significant": false
+      },
+      "mqtt_vs_websocket": {
+        "U": 74.0,
+        "raw_p": 0.07566157214388704,
+        "holm_p": 0.15132314428777408,
+        "significant": false
+      },
+      "http_vs_mqtt": {
+        "U": 63.0,
+        "raw_p": 0.3447042220069576,
+        "holm_p": 0.3447042220069576,
+        "significant": false
+      }
+    },
     "metric_label": "jitter_ms"
   },
   {
     "metric": "packet_loss_frac",
     "group": "S1",
-    "error": "Kruskal-Wallis failed: All numbers are identical in kruskal",
-    "protocols_found": [
-      "mqtt",
-      "websocket"
-    ],
+    "n_protocols": 4,
+    "n_per_protocol": {
+      "coap": 10,
+      "http": 10,
+      "mqtt": 10,
+      "websocket": 10
+    },
+    "kruskal_wallis": {
+      "H": 18.025680617635125,
+      "p": 0.00043451789153846777,
+      "significant": true
+    },
+    "dunn_pvalues": {
+      "coap_vs_http": 1.0,
+      "coap_vs_mqtt": 0.008398449835021603,
+      "coap_vs_websocket": 0.008398449835021603,
+      "http_vs_mqtt": 0.03251488147373493,
+      "http_vs_websocket": 0.03251488147373493,
+      "mqtt_vs_websocket": 1.0
+    },
+    "cliffs_delta": {
+      "coap_vs_http": {
+        "delta": 0.08,
+        "magnitude": "negligible"
+      },
+      "coap_vs_mqtt": {
+        "delta": 0.7,
+        "magnitude": "large"
+      },
+      "coap_vs_websocket": {
+        "delta": 0.7,
+        "magnitude": "large"
+      },
+      "http_vs_mqtt": {
+        "delta": 0.6,
+        "magnitude": "large"
+      },
+      "http_vs_websocket": {
+        "delta": 0.6,
+        "magnitude": "large"
+      },
+      "mqtt_vs_websocket": {
+        "delta": 0.0,
+        "magnitude": "negligible"
+      }
+    },
+    "mann_whitney_holm": {
+      "coap_vs_mqtt": {
+        "U": 85.0,
+        "raw_p": 0.0022008598012522693,
+        "holm_p": 0.013205158807513617,
+        "significant": true
+      },
+      "coap_vs_websocket": {
+        "U": 85.0,
+        "raw_p": 0.0022008598012522693,
+        "holm_p": 0.013205158807513617,
+        "significant": true
+      },
+      "http_vs_mqtt": {
+        "U": 80.0,
+        "raw_p": 0.005971963624595338,
+        "holm_p": 0.023887854498381354,
+        "significant": true
+      },
+      "http_vs_websocket": {
+        "U": 80.0,
+        "raw_p": 0.005971963624595338,
+        "holm_p": 0.023887854498381354,
+        "significant": true
+      },
+      "coap_vs_http": {
+        "U": 54.0,
+        "raw_p": 0.7868266988723315,
+        "holm_p": 1.0,
+        "significant": false
+      },
+      "mqtt_vs_websocket": {
+        "U": 50.0,
+        "raw_p": 1.0,
+        "holm_p": 1.0,
+        "significant": false
+      }
+    },
     "metric_label": "packet_loss_frac"
   },
   {
     "metric": "tput_msg_per_s",
     "group": "S1",
-    "n_protocols": 2,
+    "n_protocols": 4,
     "n_per_protocol": {
+      "coap": 10,
+      "http": 10,
       "mqtt": 10,
       "websocket": 10
     },
     "kruskal_wallis": {
-      "H": 0.24161023325808137,
-      "p": 0.6230455308379131,
-      "significant": false
+      "H": 16.81742353161944,
+      "p": 0.0007705485287339013,
+      "significant": true
     },
-    "note": "Kruskal-Wallis not significant -- no post-hoc performed",
+    "dunn_pvalues": {
+      "coap_vs_http": 0.3730153845727251,
+      "coap_vs_mqtt": 0.0014943757423592626,
+      "coap_vs_websocket": 0.004891019221167023,
+      "http_vs_mqtt": 0.4329336835625256,
+      "http_vs_websocket": 0.8292359469318793,
+      "mqtt_vs_websocket": 1.0
+    },
+    "cliffs_delta": {
+      "coap_vs_http": {
+        "delta": -0.36,
+        "magnitude": "medium"
+      },
+      "coap_vs_mqtt": {
+        "delta": -1.0,
+        "magnitude": "large"
+      },
+      "coap_vs_websocket": {
+        "delta": -0.96,
+        "magnitude": "large"
+      },
+      "http_vs_mqtt": {
+        "delta": -0.38,
+        "magnitude": "medium"
+      },
+      "http_vs_websocket": {
+        "delta": -0.35,
+        "magnitude": "medium"
+      },
+      "mqtt_vs_websocket": {
+        "delta": 0.13,
+        "magnitude": "negligible"
+      }
+    },
+    "mann_whitney_holm": {
+      "coap_vs_mqtt": {
+        "U": 0.0,
+        "raw_p": 0.00018267179110955002,
+        "holm_p": 0.0010960307466573002,
+        "significant": true
+      },
+      "coap_vs_websocket": {
+        "U": 2.0,
+        "raw_p": 0.00032983852077799353,
+        "holm_p": 0.0016491926038899676,
+        "significant": true
+      },
+      "http_vs_mqtt": {
+        "U": 31.0,
+        "raw_p": 0.16197241048012612,
+        "holm_p": 0.6478896419205045,
+        "significant": false
+      },
+      "coap_vs_http": {
+        "U": 32.0,
+        "raw_p": 0.18587673236587576,
+        "holm_p": 0.6478896419205045,
+        "significant": false
+      },
+      "http_vs_websocket": {
+        "U": 32.5,
+        "raw_p": 0.1985957586332152,
+        "holm_p": 0.6478896419205045,
+        "significant": false
+      },
+      "mqtt_vs_websocket": {
+        "U": 56.5,
+        "raw_p": 0.6500246299061012,
+        "holm_p": 0.6500246299061012,
+        "significant": false
+      }
+    },
     "metric_label": "throughput_msg_per_s"
   },
   {
     "metric": "overhead_pct_mean",
     "group": "S1",
-    "n_protocols": 2,
+    "n_protocols": 4,
     "n_per_protocol": {
+      "coap": 10,
+      "http": 10,
       "mqtt": 10,
       "websocket": 10
     },
     "kruskal_wallis": {
-      "H": 14.307228915662643,
-      "p": 0.00015526747185868903,
+      "H": 36.59223118784013,
+      "p": 5.612401801613445e-08,
       "significant": true
     },
     "dunn_pvalues": {
-      "mqtt_vs_websocket": 0.00015526747185868803
+      "coap_vs_http": 0.33455776208507354,
+      "coap_vs_mqtt": 0.33455776208507354,
+      "coap_vs_websocket": 0.0007820275900936026,
+      "http_vs_mqtt": 0.0007820275900936026,
+      "http_vs_websocket": 5.7233902460027925e-08,
+      "mqtt_vs_websocket": 0.33455776208507354
     },
     "cliffs_delta": {
+      "coap_vs_http": {
+        "delta": -1.0,
+        "magnitude": "large"
+      },
+      "coap_vs_mqtt": {
+        "delta": 1.0,
+        "magnitude": "large"
+      },
+      "coap_vs_websocket": {
+        "delta": 1.0,
+        "magnitude": "large"
+      },
+      "http_vs_mqtt": {
+        "delta": 1.0,
+        "magnitude": "large"
+      },
+      "http_vs_websocket": {
+        "delta": 1.0,
+        "magnitude": "large"
+      },
       "mqtt_vs_websocket": {
         "delta": 1.0,
         "magnitude": "large"
+      }
+    },
+    "mann_whitney_holm": {
+      "coap_vs_mqtt": {
+        "U": 100.0,
+        "raw_p": 0.0001806347208075351,
+        "holm_p": 0.0010838083248452105,
+        "significant": true
+      },
+      "http_vs_mqtt": {
+        "U": 100.0,
+        "raw_p": 0.0001806347208075351,
+        "holm_p": 0.0010838083248452105,
+        "significant": true
+      },
+      "mqtt_vs_websocket": {
+        "U": 100.0,
+        "raw_p": 0.0001806347208075351,
+        "holm_p": 0.0010838083248452105,
+        "significant": true
+      },
+      "coap_vs_http": {
+        "U": 0.0,
+        "raw_p": 0.00018267179110955002,
+        "holm_p": 0.0010838083248452105,
+        "significant": true
+      },
+      "coap_vs_websocket": {
+        "U": 100.0,
+        "raw_p": 0.00018267179110955002,
+        "holm_p": 0.0010838083248452105,
+        "significant": true
+      },
+      "http_vs_websocket": {
+        "U": 100.0,
+        "raw_p": 0.00018267179110955002,
+        "holm_p": 0.0010838083248452105,
+        "significant": true
       }
     },
     "metric_label": "overhead_pct"
@@ -92,23 +447,88 @@
   {
     "metric": "lat_mean",
     "group": "S2",
-    "n_protocols": 2,
+    "n_protocols": 4,
     "n_per_protocol": {
+      "coap": 10,
+      "http": 10,
       "mqtt": 10,
       "websocket": 10
     },
     "kruskal_wallis": {
-      "H": 10.565714285714293,
-      "p": 0.0011520450981421793,
+      "H": 14.19951219512194,
+      "p": 0.0026457851333259877,
       "significant": true
     },
     "dunn_pvalues": {
-      "mqtt_vs_websocket": 0.0011520450981421823
+      "coap_vs_http": 1.0,
+      "coap_vs_mqtt": 0.16699482592475645,
+      "coap_vs_websocket": 0.7278412653503299,
+      "http_vs_mqtt": 0.32026262411238104,
+      "http_vs_websocket": 0.4152166658038856,
+      "mqtt_vs_websocket": 0.001065454328131413
     },
     "cliffs_delta": {
+      "coap_vs_http": {
+        "delta": 0.16,
+        "magnitude": "small"
+      },
+      "coap_vs_mqtt": {
+        "delta": -0.6,
+        "magnitude": "large"
+      },
+      "coap_vs_websocket": {
+        "delta": 0.2,
+        "magnitude": "small"
+      },
+      "http_vs_mqtt": {
+        "delta": -0.6,
+        "magnitude": "large"
+      },
+      "http_vs_websocket": {
+        "delta": 0.8,
+        "magnitude": "large"
+      },
       "mqtt_vs_websocket": {
         "delta": 0.86,
         "magnitude": "large"
+      }
+    },
+    "mann_whitney_holm": {
+      "mqtt_vs_websocket": {
+        "U": 93.0,
+        "raw_p": 0.0013149446697132139,
+        "holm_p": 0.007889668018279283,
+        "significant": true
+      },
+      "http_vs_websocket": {
+        "U": 90.0,
+        "raw_p": 0.0028272720911168077,
+        "holm_p": 0.014136360455584038,
+        "significant": true
+      },
+      "coap_vs_mqtt": {
+        "U": 20.0,
+        "raw_p": 0.025748080821108063,
+        "holm_p": 0.10299232328443225,
+        "significant": false
+      },
+      "http_vs_mqtt": {
+        "U": 20.0,
+        "raw_p": 0.025748080821108063,
+        "holm_p": 0.10299232328443225,
+        "significant": false
+      },
+      "coap_vs_websocket": {
+        "U": 60.0,
+        "raw_p": 0.47267559351158717,
+        "holm_p": 0.9453511870231743,
+        "significant": false
+      },
+      "coap_vs_http": {
+        "U": 58.0,
+        "raw_p": 0.5707503880581739,
+        "holm_p": 0.9453511870231743,
+        "significant": false
       }
     },
     "metric_label": "mean_latency_ms"
@@ -116,23 +536,88 @@
   {
     "metric": "lat_std",
     "group": "S2",
-    "n_protocols": 2,
+    "n_protocols": 4,
     "n_per_protocol": {
+      "coap": 10,
+      "http": 10,
       "mqtt": 10,
       "websocket": 10
     },
     "kruskal_wallis": {
-      "H": 7.0,
-      "p": 0.008150971593502705,
+      "H": 29.798048780487818,
+      "p": 1.5218538029452067e-06,
       "significant": true
     },
     "dunn_pvalues": {
-      "mqtt_vs_websocket": 0.0081509715935027
+      "coap_vs_http": 9.58872706474897e-07,
+      "coap_vs_mqtt": 0.010245449855168698,
+      "coap_vs_websocket": 0.5998833097293583,
+      "http_vs_mqtt": 0.21226903177712186,
+      "http_vs_websocket": 0.0019393884691674035,
+      "mqtt_vs_websocket": 0.8143057555015984
     },
     "cliffs_delta": {
+      "coap_vs_http": {
+        "delta": -1.0,
+        "magnitude": "large"
+      },
+      "coap_vs_mqtt": {
+        "delta": -0.82,
+        "magnitude": "large"
+      },
+      "coap_vs_websocket": {
+        "delta": -0.8,
+        "magnitude": "large"
+      },
+      "http_vs_mqtt": {
+        "delta": 0.86,
+        "magnitude": "large"
+      },
+      "http_vs_websocket": {
+        "delta": 1.0,
+        "magnitude": "large"
+      },
       "mqtt_vs_websocket": {
         "delta": 0.7,
         "magnitude": "large"
+      }
+    },
+    "mann_whitney_holm": {
+      "coap_vs_http": {
+        "U": 0.0,
+        "raw_p": 0.00018267179110955002,
+        "holm_p": 0.0010960307466573002,
+        "significant": true
+      },
+      "http_vs_websocket": {
+        "U": 100.0,
+        "raw_p": 0.00018267179110955002,
+        "holm_p": 0.0010960307466573002,
+        "significant": true
+      },
+      "http_vs_mqtt": {
+        "U": 93.0,
+        "raw_p": 0.0013149446697132139,
+        "holm_p": 0.0052597786788528555,
+        "significant": true
+      },
+      "coap_vs_mqtt": {
+        "U": 9.0,
+        "raw_p": 0.0022022199424970783,
+        "holm_p": 0.006606659827491234,
+        "significant": true
+      },
+      "coap_vs_websocket": {
+        "U": 10.0,
+        "raw_p": 0.0028272720911168077,
+        "holm_p": 0.006606659827491234,
+        "significant": true
+      },
+      "mqtt_vs_websocket": {
+        "U": 85.0,
+        "raw_p": 0.009108496398030963,
+        "holm_p": 0.009108496398030963,
+        "significant": true
       }
     },
     "metric_label": "jitter_ms"
@@ -140,23 +625,88 @@
   {
     "metric": "packet_loss_frac",
     "group": "S2",
-    "n_protocols": 2,
+    "n_protocols": 4,
     "n_per_protocol": {
+      "coap": 10,
+      "http": 10,
       "mqtt": 10,
       "websocket": 10
     },
     "kruskal_wallis": {
-      "H": 12.34429184549356,
-      "p": 0.00044233690848488215,
+      "H": 30.327922814982966,
+      "p": 1.1773548248949595e-06,
       "significant": true
     },
     "dunn_pvalues": {
-      "mqtt_vs_websocket": 0.0004423369084848826
+      "coap_vs_http": 6.106330355000758e-05,
+      "coap_vs_mqtt": 3.348820459559997e-06,
+      "coap_vs_websocket": 0.05307851229980429,
+      "http_vs_mqtt": 1.0,
+      "http_vs_websocket": 0.43550117054534376,
+      "mqtt_vs_websocket": 0.1018541297286521
     },
     "cliffs_delta": {
+      "coap_vs_http": {
+        "delta": 1.0,
+        "magnitude": "large"
+      },
+      "coap_vs_mqtt": {
+        "delta": 1.0,
+        "magnitude": "large"
+      },
+      "coap_vs_websocket": {
+        "delta": 1.0,
+        "magnitude": "large"
+      },
+      "http_vs_mqtt": {
+        "delta": 0.12,
+        "magnitude": "negligible"
+      },
+      "http_vs_websocket": {
+        "delta": -0.52,
+        "magnitude": "large"
+      },
       "mqtt_vs_websocket": {
         "delta": -0.87,
         "magnitude": "large"
+      }
+    },
+    "mann_whitney_holm": {
+      "coap_vs_mqtt": {
+        "U": 100.0,
+        "raw_p": 8.744986536701464e-05,
+        "holm_p": 0.0005246991922020878,
+        "significant": true
+      },
+      "coap_vs_http": {
+        "U": 100.0,
+        "raw_p": 0.00011067076459386204,
+        "holm_p": 0.0005533538229693102,
+        "significant": true
+      },
+      "coap_vs_websocket": {
+        "U": 100.0,
+        "raw_p": 0.00018267179110955002,
+        "holm_p": 0.0007306871644382001,
+        "significant": true
+      },
+      "mqtt_vs_websocket": {
+        "U": 6.5,
+        "raw_p": 0.0005145602644646663,
+        "holm_p": 0.001543680793393999,
+        "significant": true
+      },
+      "http_vs_websocket": {
+        "U": 24.0,
+        "raw_p": 0.04328555665653064,
+        "holm_p": 0.08657111331306128,
+        "significant": false
+      },
+      "http_vs_mqtt": {
+        "U": 56.0,
+        "raw_p": 0.5036312588983317,
+        "holm_p": 0.5036312588983317,
+        "significant": false
       }
     },
     "metric_label": "packet_loss_frac"
@@ -164,23 +714,88 @@
   {
     "metric": "tput_msg_per_s",
     "group": "S2",
-    "n_protocols": 2,
+    "n_protocols": 4,
     "n_per_protocol": {
+      "coap": 10,
+      "http": 10,
       "mqtt": 10,
       "websocket": 10
     },
     "kruskal_wallis": {
-      "H": 11.57142857142857,
-      "p": 0.0006697294490218304,
+      "H": 22.157560975609783,
+      "p": 6.0487589309972815e-05,
       "significant": true
     },
     "dunn_pvalues": {
-      "mqtt_vs_websocket": 0.0006697294490218288
+      "coap_vs_http": 0.0016731496442482317,
+      "coap_vs_mqtt": 1.0,
+      "coap_vs_websocket": 1.0,
+      "http_vs_mqtt": 0.1238736048915662,
+      "http_vs_websocket": 7.11579256183635e-05,
+      "mqtt_vs_websocket": 0.23311337050073863
     },
     "cliffs_delta": {
+      "coap_vs_http": {
+        "delta": 0.8,
+        "magnitude": "large"
+      },
+      "coap_vs_mqtt": {
+        "delta": 0.28,
+        "magnitude": "small"
+      },
+      "coap_vs_websocket": {
+        "delta": 0.02,
+        "magnitude": "negligible"
+      },
+      "http_vs_mqtt": {
+        "delta": -0.9,
+        "magnitude": "large"
+      },
+      "http_vs_websocket": {
+        "delta": -1.0,
+        "magnitude": "large"
+      },
       "mqtt_vs_websocket": {
         "delta": -0.9,
         "magnitude": "large"
+      }
+    },
+    "mann_whitney_holm": {
+      "http_vs_websocket": {
+        "U": 0.0,
+        "raw_p": 0.00018267179110955002,
+        "holm_p": 0.0010960307466573002,
+        "significant": true
+      },
+      "http_vs_mqtt": {
+        "U": 5.0,
+        "raw_p": 0.0007685389131627665,
+        "holm_p": 0.003842694565813832,
+        "significant": true
+      },
+      "mqtt_vs_websocket": {
+        "U": 5.0,
+        "raw_p": 0.0007685389131627665,
+        "holm_p": 0.003842694565813832,
+        "significant": true
+      },
+      "coap_vs_http": {
+        "U": 90.0,
+        "raw_p": 0.0028272720911168077,
+        "holm_p": 0.008481816273350424,
+        "significant": true
+      },
+      "coap_vs_mqtt": {
+        "U": 64.0,
+        "raw_p": 0.3074894566186813,
+        "holm_p": 0.6149789132373626,
+        "significant": false
+      },
+      "coap_vs_websocket": {
+        "U": 51.0,
+        "raw_p": 0.9698499769931556,
+        "holm_p": 0.9698499769931556,
+        "significant": false
       }
     },
     "metric_label": "throughput_msg_per_s"
@@ -188,23 +803,88 @@
   {
     "metric": "overhead_pct_mean",
     "group": "S2",
-    "n_protocols": 2,
+    "n_protocols": 4,
     "n_per_protocol": {
+      "coap": 10,
+      "http": 10,
       "mqtt": 10,
       "websocket": 10
     },
     "kruskal_wallis": {
-      "H": 14.35045317220543,
-      "p": 0.00015174316656542657,
+      "H": 36.60596958888681,
+      "p": 5.574974493109006e-08,
       "significant": true
     },
     "dunn_pvalues": {
-      "mqtt_vs_websocket": 0.00015174316656542644
+      "coap_vs_http": 0.33428200736878083,
+      "coap_vs_mqtt": 0.33428200736878083,
+      "coap_vs_websocket": 0.0007797507371287169,
+      "http_vs_mqtt": 0.0007797507371287169,
+      "http_vs_websocket": 5.687105007033582e-08,
+      "mqtt_vs_websocket": 0.33428200736878083
     },
     "cliffs_delta": {
+      "coap_vs_http": {
+        "delta": -1.0,
+        "magnitude": "large"
+      },
+      "coap_vs_mqtt": {
+        "delta": 1.0,
+        "magnitude": "large"
+      },
+      "coap_vs_websocket": {
+        "delta": 1.0,
+        "magnitude": "large"
+      },
+      "http_vs_mqtt": {
+        "delta": 1.0,
+        "magnitude": "large"
+      },
+      "http_vs_websocket": {
+        "delta": 1.0,
+        "magnitude": "large"
+      },
       "mqtt_vs_websocket": {
         "delta": 1.0,
         "magnitude": "large"
+      }
+    },
+    "mann_whitney_holm": {
+      "mqtt_vs_websocket": {
+        "U": 100.0,
+        "raw_p": 0.00017661101166893502,
+        "holm_p": 0.00105966607001361,
+        "significant": true
+      },
+      "coap_vs_websocket": {
+        "U": 100.0,
+        "raw_p": 0.00017761066068896375,
+        "holm_p": 0.00105966607001361,
+        "significant": true
+      },
+      "http_vs_websocket": {
+        "U": 100.0,
+        "raw_p": 0.00017761066068896375,
+        "holm_p": 0.00105966607001361,
+        "significant": true
+      },
+      "coap_vs_mqtt": {
+        "U": 100.0,
+        "raw_p": 0.000181651146091465,
+        "holm_p": 0.00105966607001361,
+        "significant": true
+      },
+      "http_vs_mqtt": {
+        "U": 100.0,
+        "raw_p": 0.000181651146091465,
+        "holm_p": 0.00105966607001361,
+        "significant": true
+      },
+      "coap_vs_http": {
+        "U": 0.0,
+        "raw_p": 0.00018267179110955002,
+        "holm_p": 0.00105966607001361,
+        "significant": true
       }
     },
     "metric_label": "overhead_pct"
@@ -212,23 +892,88 @@
   {
     "metric": "cin_mean",
     "group": "S3",
-    "n_protocols": 2,
+    "n_protocols": 4,
     "n_per_protocol": {
+      "coap": 10,
+      "http": 10,
       "mqtt": 10,
       "websocket": 10
     },
     "kruskal_wallis": {
-      "H": 14.307228915662643,
-      "p": 0.00015526747185868903,
+      "H": 34.43182585851005,
+      "p": 1.606011747736513e-07,
       "significant": true
     },
     "dunn_pvalues": {
-      "mqtt_vs_websocket": 0.00015526747185868803
+      "coap_vs_http": 0.002991733371653588,
+      "coap_vs_mqtt": 0.14396099570491866,
+      "coap_vs_websocket": 5.7233902460027925e-08,
+      "http_vs_mqtt": 1.0,
+      "http_vs_websocket": 0.14396099570491866,
+      "mqtt_vs_websocket": 0.002991733371653588
     },
     "cliffs_delta": {
+      "coap_vs_http": {
+        "delta": -1.0,
+        "magnitude": "large"
+      },
+      "coap_vs_mqtt": {
+        "delta": -1.0,
+        "magnitude": "large"
+      },
+      "coap_vs_websocket": {
+        "delta": -1.0,
+        "magnitude": "large"
+      },
+      "http_vs_mqtt": {
+        "delta": 0.64,
+        "magnitude": "large"
+      },
+      "http_vs_websocket": {
+        "delta": -1.0,
+        "magnitude": "large"
+      },
       "mqtt_vs_websocket": {
         "delta": -1.0,
         "magnitude": "large"
+      }
+    },
+    "mann_whitney_holm": {
+      "mqtt_vs_websocket": {
+        "U": 0.0,
+        "raw_p": 0.0001806347208075351,
+        "holm_p": 0.0010838083248452105,
+        "significant": true
+      },
+      "coap_vs_mqtt": {
+        "U": 0.0,
+        "raw_p": 0.000181651146091465,
+        "holm_p": 0.0010838083248452105,
+        "significant": true
+      },
+      "coap_vs_websocket": {
+        "U": 0.0,
+        "raw_p": 0.000181651146091465,
+        "holm_p": 0.0010838083248452105,
+        "significant": true
+      },
+      "http_vs_websocket": {
+        "U": 0.0,
+        "raw_p": 0.000181651146091465,
+        "holm_p": 0.0010838083248452105,
+        "significant": true
+      },
+      "coap_vs_http": {
+        "U": 0.0,
+        "raw_p": 0.00018267179110955002,
+        "holm_p": 0.0010838083248452105,
+        "significant": true
+      },
+      "http_vs_mqtt": {
+        "U": 82.0,
+        "raw_p": 0.017215537462615803,
+        "holm_p": 0.017215537462615803,
+        "significant": true
       }
     },
     "metric_label": "cin_create_ms_mean"
@@ -236,39 +981,177 @@
   {
     "metric": "cin_std",
     "group": "S3",
-    "n_protocols": 2,
+    "n_protocols": 4,
     "n_per_protocol": {
+      "coap": 10,
+      "http": 10,
       "mqtt": 10,
       "websocket": 10
     },
     "kruskal_wallis": {
-      "H": 1.1199999999999903,
-      "p": 0.2899184539425689,
-      "significant": false
+      "H": 22.403414634146344,
+      "p": 5.37632293740479e-05,
+      "significant": true
     },
-    "note": "Kruskal-Wallis not significant -- no post-hoc performed",
+    "dunn_pvalues": {
+      "coap_vs_http": 0.0004509215561034773,
+      "coap_vs_mqtt": 0.0034528905182143045,
+      "coap_vs_websocket": 0.00027713769455764377,
+      "http_vs_mqtt": 1.0,
+      "http_vs_websocket": 1.0,
+      "mqtt_vs_websocket": 1.0
+    },
+    "cliffs_delta": {
+      "coap_vs_http": {
+        "delta": -1.0,
+        "magnitude": "large"
+      },
+      "coap_vs_mqtt": {
+        "delta": -1.0,
+        "magnitude": "large"
+      },
+      "coap_vs_websocket": {
+        "delta": -1.0,
+        "magnitude": "large"
+      },
+      "http_vs_mqtt": {
+        "delta": 0.12,
+        "magnitude": "negligible"
+      },
+      "http_vs_websocket": {
+        "delta": 0.02,
+        "magnitude": "negligible"
+      },
+      "mqtt_vs_websocket": {
+        "delta": -0.28,
+        "magnitude": "small"
+      }
+    },
+    "mann_whitney_holm": {
+      "coap_vs_http": {
+        "U": 0.0,
+        "raw_p": 0.00018267179110955002,
+        "holm_p": 0.0010960307466573002,
+        "significant": true
+      },
+      "coap_vs_mqtt": {
+        "U": 0.0,
+        "raw_p": 0.00018267179110955002,
+        "holm_p": 0.0010960307466573002,
+        "significant": true
+      },
+      "coap_vs_websocket": {
+        "U": 0.0,
+        "raw_p": 0.00018267179110955002,
+        "holm_p": 0.0010960307466573002,
+        "significant": true
+      },
+      "mqtt_vs_websocket": {
+        "U": 36.0,
+        "raw_p": 0.3074894566186813,
+        "holm_p": 0.922468369856044,
+        "significant": false
+      },
+      "http_vs_mqtt": {
+        "U": 56.0,
+        "raw_p": 0.6775849579524755,
+        "holm_p": 1.0,
+        "significant": false
+      },
+      "http_vs_websocket": {
+        "U": 51.0,
+        "raw_p": 0.9698499769931556,
+        "holm_p": 1.0,
+        "significant": false
+      }
+    },
     "metric_label": "cin_create_ms_jitter"
   },
   {
     "metric": "cin_p95",
     "group": "S3",
-    "n_protocols": 2,
+    "n_protocols": 4,
     "n_per_protocol": {
+      "coap": 10,
+      "http": 10,
       "mqtt": 10,
       "websocket": 10
     },
     "kruskal_wallis": {
-      "H": 9.814366424535912,
-      "p": 0.001731539161531765,
+      "H": 32.321077467558005,
+      "p": 4.478294014294524e-07,
       "significant": true
     },
     "dunn_pvalues": {
-      "mqtt_vs_websocket": 0.0017315391615317635
+      "coap_vs_http": 0.014431428771392436,
+      "coap_vs_mqtt": 0.014431428771392436,
+      "coap_vs_websocket": 8.156915809327482e-08,
+      "http_vs_mqtt": 1.0,
+      "http_vs_websocket": 0.049246794665838825,
+      "mqtt_vs_websocket": 0.049246794665838825
     },
     "cliffs_delta": {
+      "coap_vs_http": {
+        "delta": -1.0,
+        "magnitude": "large"
+      },
+      "coap_vs_mqtt": {
+        "delta": -1.0,
+        "magnitude": "large"
+      },
+      "coap_vs_websocket": {
+        "delta": -1.0,
+        "magnitude": "large"
+      },
+      "http_vs_mqtt": {
+        "delta": 0.1,
+        "magnitude": "negligible"
+      },
+      "http_vs_websocket": {
+        "delta": -1.0,
+        "magnitude": "large"
+      },
       "mqtt_vs_websocket": {
         "delta": -0.8,
         "magnitude": "large"
+      }
+    },
+    "mann_whitney_holm": {
+      "coap_vs_mqtt": {
+        "U": 0.0,
+        "raw_p": 4.1717252206199095e-05,
+        "holm_p": 0.00025030351323719456,
+        "significant": true
+      },
+      "coap_vs_websocket": {
+        "U": 0.0,
+        "raw_p": 4.917745990552776e-05,
+        "holm_p": 0.00025030351323719456,
+        "significant": true
+      },
+      "coap_vs_http": {
+        "U": 0.0,
+        "raw_p": 5.469864163379713e-05,
+        "holm_p": 0.00025030351323719456,
+        "significant": true
+      },
+      "http_vs_websocket": {
+        "U": 0.0,
+        "raw_p": 0.00013172960306213278,
+        "holm_p": 0.0003951888091863983,
+        "significant": true
+      },
+      "mqtt_vs_websocket": {
+        "U": 10.0,
+        "raw_p": 0.001977245328084767,
+        "holm_p": 0.003954490656169534,
+        "significant": true
+      },
+      "http_vs_mqtt": {
+        "U": 55.0,
+        "raw_p": 0.7007462279272401,
+        "holm_p": 0.7007462279272401,
+        "significant": false
       }
     },
     "metric_label": "cin_create_ms_p95"
@@ -276,23 +1159,88 @@
   {
     "metric": "packet_loss_frac",
     "group": "S3",
-    "n_protocols": 2,
+    "n_protocols": 4,
     "n_per_protocol": {
+      "coap": 10,
+      "http": 10,
       "mqtt": 10,
       "websocket": 10
     },
     "kruskal_wallis": {
-      "H": 16.43598615916954,
-      "p": 5.0320800628650135e-05,
+      "H": 32.22222222222223,
+      "p": 4.6984153146783284e-07,
       "significant": true
     },
     "dunn_pvalues": {
-      "mqtt_vs_websocket": 5.03208006286498e-05
+      "coap_vs_http": 1.0,
+      "coap_vs_mqtt": 1.0,
+      "coap_vs_websocket": 2.5296323653602535e-05,
+      "http_vs_mqtt": 1.0,
+      "http_vs_websocket": 0.00012520297252718702,
+      "mqtt_vs_websocket": 4.557625809958899e-06
     },
     "cliffs_delta": {
+      "coap_vs_http": {
+        "delta": -0.1,
+        "magnitude": "negligible"
+      },
+      "coap_vs_mqtt": {
+        "delta": 0.1,
+        "magnitude": "negligible"
+      },
+      "coap_vs_websocket": {
+        "delta": -1.0,
+        "magnitude": "large"
+      },
+      "http_vs_mqtt": {
+        "delta": 0.2,
+        "magnitude": "small"
+      },
+      "http_vs_websocket": {
+        "delta": -1.0,
+        "magnitude": "large"
+      },
       "mqtt_vs_websocket": {
         "delta": -1.0,
         "magnitude": "large"
+      }
+    },
+    "mann_whitney_holm": {
+      "mqtt_vs_websocket": {
+        "U": 0.0,
+        "raw_p": 5.9802016807202813e-05,
+        "holm_p": 0.0003588121008432169,
+        "significant": true
+      },
+      "coap_vs_websocket": {
+        "U": 0.0,
+        "raw_p": 8.227298920132631e-05,
+        "holm_p": 0.00041136494600663154,
+        "significant": true
+      },
+      "http_vs_websocket": {
+        "U": 0.0,
+        "raw_p": 0.0001038020590746405,
+        "holm_p": 0.000415208236298562,
+        "significant": true
+      },
+      "http_vs_mqtt": {
+        "U": 60.0,
+        "raw_p": 0.16748875557485465,
+        "holm_p": 0.502466266724564,
+        "significant": false
+      },
+      "coap_vs_mqtt": {
+        "U": 55.0,
+        "raw_p": 0.36812025069351895,
+        "holm_p": 0.7362405013870379,
+        "significant": false
+      },
+      "coap_vs_http": {
+        "U": 45.0,
+        "raw_p": 0.5827782179740375,
+        "holm_p": 0.7362405013870379,
+        "significant": false
       }
     },
     "metric_label": "packet_loss_frac"
@@ -300,23 +1248,88 @@
   {
     "metric": "tput_msg_per_s",
     "group": "S3",
-    "n_protocols": 2,
+    "n_protocols": 4,
     "n_per_protocol": {
+      "coap": 10,
+      "http": 10,
       "mqtt": 10,
       "websocket": 10
     },
     "kruskal_wallis": {
-      "H": 14.285714285714278,
-      "p": 0.00015705228423075227,
+      "H": 33.13756097560977,
+      "p": 3.012511257694449e-07,
       "significant": true
     },
     "dunn_pvalues": {
-      "mqtt_vs_websocket": 0.00015705228423075119
+      "coap_vs_http": 0.005245478510508105,
+      "coap_vs_mqtt": 1.0,
+      "coap_vs_websocket": 4.1366990813415457e-07,
+      "http_vs_mqtt": 0.3063531651817634,
+      "http_vs_websocket": 0.23311337050073805,
+      "mqtt_vs_websocket": 0.0003540626661734514
     },
     "cliffs_delta": {
+      "coap_vs_http": {
+        "delta": 0.84,
+        "magnitude": "large"
+      },
+      "coap_vs_mqtt": {
+        "delta": 0.8,
+        "magnitude": "large"
+      },
+      "coap_vs_websocket": {
+        "delta": 1.0,
+        "magnitude": "large"
+      },
+      "http_vs_mqtt": {
+        "delta": -1.0,
+        "magnitude": "large"
+      },
+      "http_vs_websocket": {
+        "delta": 1.0,
+        "magnitude": "large"
+      },
       "mqtt_vs_websocket": {
         "delta": 1.0,
         "magnitude": "large"
+      }
+    },
+    "mann_whitney_holm": {
+      "coap_vs_websocket": {
+        "U": 100.0,
+        "raw_p": 0.00018267179110955002,
+        "holm_p": 0.0010960307466573002,
+        "significant": true
+      },
+      "http_vs_mqtt": {
+        "U": 0.0,
+        "raw_p": 0.00018267179110955002,
+        "holm_p": 0.0010960307466573002,
+        "significant": true
+      },
+      "http_vs_websocket": {
+        "U": 100.0,
+        "raw_p": 0.00018267179110955002,
+        "holm_p": 0.0010960307466573002,
+        "significant": true
+      },
+      "mqtt_vs_websocket": {
+        "U": 100.0,
+        "raw_p": 0.00018267179110955002,
+        "holm_p": 0.0010960307466573002,
+        "significant": true
+      },
+      "coap_vs_http": {
+        "U": 92.0,
+        "raw_p": 0.0017062493689195967,
+        "holm_p": 0.0034124987378391933,
+        "significant": true
+      },
+      "coap_vs_mqtt": {
+        "U": 90.0,
+        "raw_p": 0.0028272720911168077,
+        "holm_p": 0.0034124987378391933,
+        "significant": true
       }
     },
     "metric_label": "throughput_msg_per_s"
@@ -324,25 +1337,124 @@
   {
     "metric": "overhead_pct_mean",
     "group": "S3",
-    "n_protocols": 2,
+    "n_protocols": 4,
     "n_per_protocol": {
+      "coap": 10,
+      "http": 10,
       "mqtt": 10,
       "websocket": 10
     },
     "kruskal_wallis": {
-      "H": 18.99999999999999,
-      "p": 1.3071845366763076e-05,
+      "H": 39.00000000000001,
+      "p": 1.7356651904833264e-08,
       "significant": true
     },
     "dunn_pvalues": {
-      "mqtt_vs_websocket": 1.3071845366762953e-05
+      "coap_vs_http": 0.28971664606008996,
+      "coap_vs_mqtt": 0.28971664606008996,
+      "coap_vs_websocket": 0.00046952753271345,
+      "http_vs_mqtt": 0.00046952753271345,
+      "http_vs_websocket": 1.8792047750769326e-08,
+      "mqtt_vs_websocket": 0.28971664606008996
     },
     "cliffs_delta": {
+      "coap_vs_http": {
+        "delta": -1.0,
+        "magnitude": "large"
+      },
+      "coap_vs_mqtt": {
+        "delta": 1.0,
+        "magnitude": "large"
+      },
+      "coap_vs_websocket": {
+        "delta": 1.0,
+        "magnitude": "large"
+      },
+      "http_vs_mqtt": {
+        "delta": 1.0,
+        "magnitude": "large"
+      },
+      "http_vs_websocket": {
+        "delta": 1.0,
+        "magnitude": "large"
+      },
       "mqtt_vs_websocket": {
         "delta": 1.0,
         "magnitude": "large"
       }
     },
+    "mann_whitney_holm": {
+      "coap_vs_http": {
+        "U": 0.0,
+        "raw_p": 1.593791168806624e-05,
+        "holm_p": 9.562747012839745e-05,
+        "significant": true
+      },
+      "coap_vs_mqtt": {
+        "U": 100.0,
+        "raw_p": 1.593791168806624e-05,
+        "holm_p": 9.562747012839745e-05,
+        "significant": true
+      },
+      "coap_vs_websocket": {
+        "U": 100.0,
+        "raw_p": 1.593791168806624e-05,
+        "holm_p": 9.562747012839745e-05,
+        "significant": true
+      },
+      "http_vs_mqtt": {
+        "U": 100.0,
+        "raw_p": 1.593791168806624e-05,
+        "holm_p": 9.562747012839745e-05,
+        "significant": true
+      },
+      "http_vs_websocket": {
+        "U": 100.0,
+        "raw_p": 1.593791168806624e-05,
+        "holm_p": 9.562747012839745e-05,
+        "significant": true
+      },
+      "mqtt_vs_websocket": {
+        "U": 100.0,
+        "raw_p": 1.593791168806624e-05,
+        "holm_p": 9.562747012839745e-05,
+        "significant": true
+      }
+    },
     "metric_label": "overhead_pct"
+  },
+  {
+    "type": "ntp_offset",
+    "description": "NTP clock offset per protocol. delta_ms = android_clock - streamlit_clock (negative = android behind). S1 latency is inflated by -delta_ms because t_send_android appears earlier than it is (android clock slow).",
+    "protocols": {
+      "coap": {
+        "delta_ms": -2569.5,
+        "s3_lat_mean_ms": -2529.3,
+        "s3_cin_mean_ms": 80.4,
+        "s1_lat_inflation_ms": 2569.5,
+        "s1_lat_raw_ms": 2602.4
+      },
+      "http": {
+        "delta_ms": -2434.0,
+        "s3_lat_mean_ms": -2381.1,
+        "s3_cin_mean_ms": 105.9,
+        "s1_lat_inflation_ms": 2434.0,
+        "s1_lat_raw_ms": 2534.7
+      },
+      "mqtt": {
+        "delta_ms": -2212.5,
+        "s3_lat_mean_ms": -2161.2,
+        "s3_cin_mean_ms": 102.6,
+        "s1_lat_inflation_ms": 2212.5,
+        "s1_lat_raw_ms": 2230.5
+      },
+      "websocket": {
+        "delta_ms": -1914.4,
+        "s3_lat_mean_ms": -1842.3,
+        "s3_cin_mean_ms": 144.1,
+        "s1_lat_inflation_ms": 1914.4,
+        "s1_lat_raw_ms": 1838.1
+      }
+    }
   }
 ]

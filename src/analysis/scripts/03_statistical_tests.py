@@ -7,6 +7,8 @@ Reads per-run stats from data/processed/stats_paper_s{1,2,3}.parquet
   2. Dunn's post-hoc test — pairwise comparisons with Bonferroni correction
      (scikit_posthocs.posthoc_dunn)
   3. Cliff's delta effect sizes — for each significant pairwise comparison
+  4. Mann-Whitney U + Holm correction — secondary pairwise test for S3 cin_mean
+     (Dunn+Bonferroni is conservative with 4 groups; Holm correction is less so)
 
 Paper scenario mapping:
     S1 — telemetry 4 msg/s   (stats_paper_s1.parquet)
@@ -16,6 +18,12 @@ Paper scenario mapping:
 For S3, the primary latency metric is cin_mean (NTP-independent Streamlit->CSE
 CIN round-trip). lat_mean is NTP-dependent and typically negative (~-1880 ms)
 so it is excluded from S3 statistical tests.
+
+Dunn+Bonferroni paradox (S3 cin_mean): Cliff's delta shows perfect rank
+separation (delta=-1.0) for coap_vs_mqtt, but Dunn p=0.144. Cause: Dunn
+ranks all 4 groups jointly, diluting pairwise separation; Bonferroni then
+amplifies the conservatism. Mann-Whitney+Holm (stored in mann_whitney_holm)
+resolves all 6 pairs as significant (p<0.05).
 
 Outputs:
     data/processed/statistical_tests.json — all test results (H, p, pairwise)
@@ -74,6 +82,48 @@ METRICS_S3 = [
 # ---------------------------------------------------------------------------
 # Effect size helpers
 # ---------------------------------------------------------------------------
+
+
+def mannwhitney_holm(
+    groups: dict[str, np.ndarray],
+) -> dict[str, dict]:
+    """Pairwise Mann-Whitney U tests with Holm-Bonferroni correction.
+
+    Less conservative than Dunn+Bonferroni for pairwise comparisons when
+    Dunn's joint ranking dilutes per-pair separation (e.g. S3 cin_mean).
+
+    Parameters
+    ----------
+    groups : dict mapping protocol name -> array of per-run values
+
+    Returns
+    -------
+    dict: pair_key -> {U, raw_p, holm_p, significant}
+    """
+    pairs = list(combinations(sorted(groups.keys()), 2))
+    raw: list[tuple[str, str, float, float]] = []
+
+    for a, b in pairs:
+        stat, p = sp_stats.mannwhitneyu(groups[a], groups[b], alternative="two-sided")
+        raw.append((a, b, float(stat), float(p)))
+
+    # Holm step-down: sort ascending by p, multiply each p by (n - rank)
+    raw.sort(key=lambda x: x[3])
+    n = len(raw)
+    out: dict[str, dict] = {}
+    running_max = 0.0
+    for rank, (a, b, stat, p) in enumerate(raw):
+        # Holm correction: max of all adjusted p-values so far (step-down enforces monotonicity)
+        adjusted = min(p * (n - rank), 1.0)
+        running_max = max(running_max, adjusted)
+        out[f"{a}_vs_{b}"] = {
+            "U": stat,
+            "raw_p": p,
+            "holm_p": running_max,
+            "significant": running_max < 0.05,
+        }
+
+    return out
 
 
 def cliffs_delta(x: np.ndarray, y: np.ndarray) -> float:
@@ -198,6 +248,11 @@ def run_tests_for_group(
 
     result["dunn_pvalues"] = dunn_dict
     result["cliffs_delta"] = cliffs
+
+    # ── Mann-Whitney + Holm (secondary, resolves Dunn+Bonferroni paradox) ──
+    # Stored for every metric so callers can use it; most relevant for S3 cin_mean.
+    result["mann_whitney_holm"] = mannwhitney_holm(groups)
+
     return result
 
 
@@ -256,6 +311,35 @@ def main() -> None:
             r = run_tests_for_group(s3, col, "S3", all_protocols)
             r["metric_label"] = label
             results.append(r)
+
+    # ── NTP offset δ per protocol (appended as a special entry) ──
+    # delta_ms = android_clock - streamlit_clock (negative = android behind)
+    # Derived from S3: lat_S3 = true_one_way + delta  =>  delta = lat_S3 - cin_S3/2
+    # S1 latency inflation = -delta (android behind => S1 inflated by |delta|)
+    ntp_deltas: dict[str, dict] = {}
+    s3_lat_mean = s3.groupby("protocol")["lat_mean"].mean()
+    s3_cin_mean = s3.groupby("protocol")["cin_mean"].mean()
+    s1_lat_mean = s1.groupby("protocol")["lat_mean"].mean()
+    for proto in all_protocols:
+        if proto in s3_lat_mean and proto in s3_cin_mean:
+            delta = float(s3_lat_mean[proto] - s3_cin_mean[proto] / 2)
+            s1_inflation = -delta  # amount by which S1 lat is inflated
+            ntp_deltas[proto] = {
+                "delta_ms": round(delta, 1),        # android - streamlit offset
+                "s3_lat_mean_ms": round(float(s3_lat_mean[proto]), 1),
+                "s3_cin_mean_ms": round(float(s3_cin_mean[proto]), 1),
+                "s1_lat_inflation_ms": round(s1_inflation, 1),
+                "s1_lat_raw_ms": round(float(s1_lat_mean.get(proto, float("nan"))), 1),
+            }
+    results.append({
+        "type": "ntp_offset",
+        "description": (
+            "NTP clock offset per protocol. delta_ms = android_clock - streamlit_clock "
+            "(negative = android behind). S1 latency is inflated by -delta_ms because "
+            "t_send_android appears earlier than it is (android clock slow)."
+        ),
+        "protocols": ntp_deltas,
+    })
 
     # ── Write output ──
     out_path = DATA_PROCESSED / "statistical_tests.json"
