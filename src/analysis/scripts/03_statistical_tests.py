@@ -151,7 +151,16 @@ def run_tests_for_group(
         }
 
     # ── Kruskal-Wallis ──
-    kw_result = sp_stats.kruskal(*groups.values())
+    # Fails if all values across all groups are identical (e.g. 0% loss everywhere).
+    try:
+        kw_result = sp_stats.kruskal(*groups.values())
+    except ValueError as exc:
+        return {
+            "metric": metric_col,
+            "group": group_label,
+            "error": f"Kruskal-Wallis failed: {exc}",
+            "protocols_found": list(groups.keys()),
+        }
     h_stat = float(kw_result.statistic)
     p_kw = float(kw_result.pvalue)
 
