@@ -66,11 +66,11 @@ VALID_PROTOCOLS = {"mqtt", "http", "websocket", "coap"}
 VALID_SCENARIOS = {1, 2}
 VALID_DIRECTIONS = {"telemetry", "command"}
 
-# Filename pattern — extracts (protocol, scenario, rate_or_None, date, run_num).
-# S1: mqtt_s1_r5_20260601_run001.csv
-# S2: mqtt_s2_20260601_run001.csv
+# Filename pattern — extracts (protocol, paper_scenario, date, run_num).
+# Paper scenarios: s1=telemetry 4 msg/s, s2=telemetry 16 msg/s, s3=command ping.
+# Rate is stored in the JSON sidecar, not in the filename.
 _FILENAME_RE = re.compile(
-    r"^(websocket|mqtt|http|coap)_s([12])(?:_r(\d+))?_(\d{8})_run(\d+)\.csv$"
+    r"^(websocket|mqtt|http|coap)_s([123])_(\d{8})_run(\d+)\.csv$"
 )
 
 
@@ -101,8 +101,7 @@ def _validate_file(path: Path) -> pd.DataFrame | None:
         print(f"[SKIP] {path.name}: filename does not match canonical pattern")
         return None
 
-    proto_fname, scenario_fname, rate_str, date_str, run_num = m.groups()
-    rate_fname = int(rate_str) if rate_str else None
+    proto_fname, paper_s_str, date_str, run_num = m.groups()
 
     # ── Load ──
     try:
@@ -163,7 +162,10 @@ def _validate_file(path: Path) -> pd.DataFrame | None:
 
     # ── Attach meta-columns from filename + sidecar ──
     sidecar = _parse_sidecar(path)
-    df["rate_msg_s"] = sidecar.get("rate_msg_s", rate_fname)
+    # paper_scenario from sidecar if present, else from filename (s1→1, s2→2, s3→3).
+    df["paper_scenario"] = int(sidecar.get("paper_scenario", int(paper_s_str)))
+    # rate_msg_s only in sidecar (S3 has no rate; S1=4, S2=16).
+    df["rate_msg_s"] = sidecar.get("rate_msg_s")
     df["cse_version"] = sidecar.get("cse_version", "unknown")
     df["android_app_version"] = sidecar.get("android_app_version", "unknown")
     df["drone_model"] = sidecar.get("drone_model", "unknown")
@@ -208,16 +210,16 @@ def main() -> None:
     all_runs = pd.concat(frames, ignore_index=True)
 
     # Sort for deterministic Parquet layout.
-    all_runs.sort_values(["protocol", "scenario", "rate_msg_s", "run_id", "seq"], inplace=True)
+    all_runs.sort_values(["protocol", "paper_scenario", "rate_msg_s", "run_id", "seq"], inplace=True)
     all_runs.reset_index(drop=True, inplace=True)
 
     DATA_PROCESSED.mkdir(parents=True, exist_ok=True)
     out_path = DATA_PROCESSED / "all_runs.parquet"
     all_runs.to_parquet(out_path, index=False)
 
-    print(f"\nWrote {len(all_runs)} rows → {out_path}")
+    print(f"\nWrote {len(all_runs)} rows -> {out_path}")
     print(f"Protocols: {sorted(all_runs['protocol'].unique())}")
-    print(f"Scenarios: {sorted(all_runs['scenario'].unique())}")
+    print(f"Paper scenarios: {sorted(all_runs['paper_scenario'].unique())}")
     print(f"Rates: {sorted(all_runs['rate_msg_s'].dropna().unique())}")
     print(f"Run IDs: {all_runs['run_id'].nunique()}")
 
