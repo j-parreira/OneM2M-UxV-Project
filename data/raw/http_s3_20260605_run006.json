@@ -1,0 +1,30 @@
+{
+  "run_id": "http_s3_20260605_run006",
+  "protocol": "http",
+  "paper_scenario": 3,
+  "scenario": 2,
+  "rate_msg_s": null,
+  "duration_s": 120,
+  "cse_version": "2025.11",
+  "android_app_version": "4.0",
+  "drone_model": "DJI Mavic 2 Enterprise Advanced",
+  "start_timestamp_ms": 1780680849074,
+  "created_at_utc": "2026-06-05T17:35:40Z",
+  "run_config": {
+    "protocol": "http",
+    "scenario": 2,
+    "rate_msg_s": null,
+    "n_commands": 60,
+    "duration_s": 120,
+    "ack_run_timeout_s": 600,
+    "inter_command_delay_ms": 1000,
+    "run_id": "http_s3_20260605_run006",
+    "notes": ""
+  },
+  "notes": "",
+  "software_versions": {
+    "python": "3.12.7 (tags/v3.12.7:0b05ead, Oct  1 2024, 03:06:41) [MSC v.1941 64 bit (AMD64)]",
+    "streamlit": "1.45.1"
+  },
+  "n_records": 60
+}

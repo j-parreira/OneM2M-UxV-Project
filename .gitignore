@@ -31,13 +31,9 @@ src/android/*.iml
 src/android/captures/
 src/android/.externalNativeBuild/
 
-# Large data files (>10 MB rule — keep directory structure)
-data/raw/*.csv
-data/raw/*.json
-data/raw/*.parquet
-data/processed/*.csv
-data/processed/*.json
-data/processed/*.parquet
+# Large data files (>10 MB individual file limit)
+# Current dataset is small (<2 MB total) — tracked in git for reproducibility
+# Revisit if individual files exceed 10 MB
 # Preserve directory markers
 !data/raw/.gitkeep
 !data/processed/.gitkeep

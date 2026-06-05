@@ -1,0 +1,348 @@
+[
+  {
+    "metric": "lat_mean",
+    "group": "S1",
+    "n_protocols": 2,
+    "n_per_protocol": {
+      "mqtt": 10,
+      "websocket": 10
+    },
+    "kruskal_wallis": {
+      "H": 14.285714285714278,
+      "p": 0.00015705228423075227,
+      "significant": true
+    },
+    "dunn_pvalues": {
+      "mqtt_vs_websocket": 0.00015705228423075119
+    },
+    "cliffs_delta": {
+      "mqtt_vs_websocket": {
+        "delta": 1.0,
+        "magnitude": "large"
+      }
+    },
+    "metric_label": "mean_latency_ms"
+  },
+  {
+    "metric": "lat_std",
+    "group": "S1",
+    "n_protocols": 2,
+    "n_per_protocol": {
+      "mqtt": 10,
+      "websocket": 10
+    },
+    "kruskal_wallis": {
+      "H": 3.2914285714285683,
+      "p": 0.0696424047983281,
+      "significant": false
+    },
+    "note": "Kruskal-Wallis not significant -- no post-hoc performed",
+    "metric_label": "jitter_ms"
+  },
+  {
+    "metric": "packet_loss_frac",
+    "group": "S1",
+    "error": "Kruskal-Wallis failed: All numbers are identical in kruskal",
+    "protocols_found": [
+      "mqtt",
+      "websocket"
+    ],
+    "metric_label": "packet_loss_frac"
+  },
+  {
+    "metric": "tput_msg_per_s",
+    "group": "S1",
+    "n_protocols": 2,
+    "n_per_protocol": {
+      "mqtt": 10,
+      "websocket": 10
+    },
+    "kruskal_wallis": {
+      "H": 0.24161023325808137,
+      "p": 0.6230455308379131,
+      "significant": false
+    },
+    "note": "Kruskal-Wallis not significant -- no post-hoc performed",
+    "metric_label": "throughput_msg_per_s"
+  },
+  {
+    "metric": "overhead_pct_mean",
+    "group": "S1",
+    "n_protocols": 2,
+    "n_per_protocol": {
+      "mqtt": 10,
+      "websocket": 10
+    },
+    "kruskal_wallis": {
+      "H": 14.307228915662643,
+      "p": 0.00015526747185868903,
+      "significant": true
+    },
+    "dunn_pvalues": {
+      "mqtt_vs_websocket": 0.00015526747185868803
+    },
+    "cliffs_delta": {
+      "mqtt_vs_websocket": {
+        "delta": 1.0,
+        "magnitude": "large"
+      }
+    },
+    "metric_label": "overhead_pct"
+  },
+  {
+    "metric": "lat_mean",
+    "group": "S2",
+    "n_protocols": 2,
+    "n_per_protocol": {
+      "mqtt": 10,
+      "websocket": 10
+    },
+    "kruskal_wallis": {
+      "H": 10.565714285714293,
+      "p": 0.0011520450981421793,
+      "significant": true
+    },
+    "dunn_pvalues": {
+      "mqtt_vs_websocket": 0.0011520450981421823
+    },
+    "cliffs_delta": {
+      "mqtt_vs_websocket": {
+        "delta": 0.86,
+        "magnitude": "large"
+      }
+    },
+    "metric_label": "mean_latency_ms"
+  },
+  {
+    "metric": "lat_std",
+    "group": "S2",
+    "n_protocols": 2,
+    "n_per_protocol": {
+      "mqtt": 10,
+      "websocket": 10
+    },
+    "kruskal_wallis": {
+      "H": 7.0,
+      "p": 0.008150971593502705,
+      "significant": true
+    },
+    "dunn_pvalues": {
+      "mqtt_vs_websocket": 0.0081509715935027
+    },
+    "cliffs_delta": {
+      "mqtt_vs_websocket": {
+        "delta": 0.7,
+        "magnitude": "large"
+      }
+    },
+    "metric_label": "jitter_ms"
+  },
+  {
+    "metric": "packet_loss_frac",
+    "group": "S2",
+    "n_protocols": 2,
+    "n_per_protocol": {
+      "mqtt": 10,
+      "websocket": 10
+    },
+    "kruskal_wallis": {
+      "H": 12.34429184549356,
+      "p": 0.00044233690848488215,
+      "significant": true
+    },
+    "dunn_pvalues": {
+      "mqtt_vs_websocket": 0.0004423369084848826
+    },
+    "cliffs_delta": {
+      "mqtt_vs_websocket": {
+        "delta": -0.87,
+        "magnitude": "large"
+      }
+    },
+    "metric_label": "packet_loss_frac"
+  },
+  {
+    "metric": "tput_msg_per_s",
+    "group": "S2",
+    "n_protocols": 2,
+    "n_per_protocol": {
+      "mqtt": 10,
+      "websocket": 10
+    },
+    "kruskal_wallis": {
+      "H": 11.57142857142857,
+      "p": 0.0006697294490218304,
+      "significant": true
+    },
+    "dunn_pvalues": {
+      "mqtt_vs_websocket": 0.0006697294490218288
+    },
+    "cliffs_delta": {
+      "mqtt_vs_websocket": {
+        "delta": -0.9,
+        "magnitude": "large"
+      }
+    },
+    "metric_label": "throughput_msg_per_s"
+  },
+  {
+    "metric": "overhead_pct_mean",
+    "group": "S2",
+    "n_protocols": 2,
+    "n_per_protocol": {
+      "mqtt": 10,
+      "websocket": 10
+    },
+    "kruskal_wallis": {
+      "H": 14.35045317220543,
+      "p": 0.00015174316656542657,
+      "significant": true
+    },
+    "dunn_pvalues": {
+      "mqtt_vs_websocket": 0.00015174316656542644
+    },
+    "cliffs_delta": {
+      "mqtt_vs_websocket": {
+        "delta": 1.0,
+        "magnitude": "large"
+      }
+    },
+    "metric_label": "overhead_pct"
+  },
+  {
+    "metric": "cin_mean",
+    "group": "S3",
+    "n_protocols": 2,
+    "n_per_protocol": {
+      "mqtt": 10,
+      "websocket": 10
+    },
+    "kruskal_wallis": {
+      "H": 14.307228915662643,
+      "p": 0.00015526747185868903,
+      "significant": true
+    },
+    "dunn_pvalues": {
+      "mqtt_vs_websocket": 0.00015526747185868803
+    },
+    "cliffs_delta": {
+      "mqtt_vs_websocket": {
+        "delta": -1.0,
+        "magnitude": "large"
+      }
+    },
+    "metric_label": "cin_create_ms_mean"
+  },
+  {
+    "metric": "cin_std",
+    "group": "S3",
+    "n_protocols": 2,
+    "n_per_protocol": {
+      "mqtt": 10,
+      "websocket": 10
+    },
+    "kruskal_wallis": {
+      "H": 1.1199999999999903,
+      "p": 0.2899184539425689,
+      "significant": false
+    },
+    "note": "Kruskal-Wallis not significant -- no post-hoc performed",
+    "metric_label": "cin_create_ms_jitter"
+  },
+  {
+    "metric": "cin_p95",
+    "group": "S3",
+    "n_protocols": 2,
+    "n_per_protocol": {
+      "mqtt": 10,
+      "websocket": 10
+    },
+    "kruskal_wallis": {
+      "H": 9.814366424535912,
+      "p": 0.001731539161531765,
+      "significant": true
+    },
+    "dunn_pvalues": {
+      "mqtt_vs_websocket": 0.0017315391615317635
+    },
+    "cliffs_delta": {
+      "mqtt_vs_websocket": {
+        "delta": -0.8,
+        "magnitude": "large"
+      }
+    },
+    "metric_label": "cin_create_ms_p95"
+  },
+  {
+    "metric": "packet_loss_frac",
+    "group": "S3",
+    "n_protocols": 2,
+    "n_per_protocol": {
+      "mqtt": 10,
+      "websocket": 10
+    },
+    "kruskal_wallis": {
+      "H": 16.43598615916954,
+      "p": 5.0320800628650135e-05,
+      "significant": true
+    },
+    "dunn_pvalues": {
+      "mqtt_vs_websocket": 5.03208006286498e-05
+    },
+    "cliffs_delta": {
+      "mqtt_vs_websocket": {
+        "delta": -1.0,
+        "magnitude": "large"
+      }
+    },
+    "metric_label": "packet_loss_frac"
+  },
+  {
+    "metric": "tput_msg_per_s",
+    "group": "S3",
+    "n_protocols": 2,
+    "n_per_protocol": {
+      "mqtt": 10,
+      "websocket": 10
+    },
+    "kruskal_wallis": {
+      "H": 14.285714285714278,
+      "p": 0.00015705228423075227,
+      "significant": true
+    },
+    "dunn_pvalues": {
+      "mqtt_vs_websocket": 0.00015705228423075119
+    },
+    "cliffs_delta": {
+      "mqtt_vs_websocket": {
+        "delta": 1.0,
+        "magnitude": "large"
+      }
+    },
+    "metric_label": "throughput_msg_per_s"
+  },
+  {
+    "metric": "overhead_pct_mean",
+    "group": "S3",
+    "n_protocols": 2,
+    "n_per_protocol": {
+      "mqtt": 10,
+      "websocket": 10
+    },
+    "kruskal_wallis": {
+      "H": 18.99999999999999,
+      "p": 1.3071845366763076e-05,
+      "significant": true
+    },
+    "dunn_pvalues": {
+      "mqtt_vs_websocket": 1.3071845366762953e-05
+    },
+    "cliffs_delta": {
+      "mqtt_vs_websocket": {
+        "delta": 1.0,
+        "magnitude": "large"
+      }
+    },
+    "metric_label": "overhead_pct"
+  }
+]
