@@ -161,7 +161,7 @@ Dev machine (Streamlit)              ACME CSE                  Android RC (DJI R
 - `cin_create_ms` = Streamlit→CSE round-trip (monotonic, single-device, no NTP dependency) — **primary S3 latency metric for the paper**
 - `latency_ms = t_recv_ms − t_cmd_ms` (NTP-dependent: two clocks) — **typically negative in S3** (Android clock behind Streamlit → measured value = true_latency − |δ| < 0); do not use directly for paper latency analysis
 - `t_exec_ms` = `System.currentTimeMillis()` after Android dispatches command (dispatch overhead)
-- `delivered = True` when ACK arrives within 10 s timeout
+- `delivered = True` when ACK arrives within 15 s timeout (`_ACK_CMD_TIMEOUT_S = 15.0` in `orchestrator.py` — raised from 10 s to accommodate WebSocket notification latency)
 
 ---
 
