@@ -7,7 +7,7 @@ a DJI Mavic 2 Enterprise Advanced (M2EA) drone controlled from an Android RC.
 **Authors:** João Parreira, Pedro Barbeiro  
 **Institution:** Instituto Politécnico de Leiria — Mestrado em Engenharia Informática  
 **Deliverable:** MDPI journal article, 8–12 pp. — *Mobilidade em Sistemas Computacionais*  
-**Deadline:** 2026-06-06
+**Deadline:** 2026-06-06 ✅ **Submitted**
 
 ---
 
@@ -58,28 +58,37 @@ Packet loss derived from gaps in the Android `seq` counter.
 
 Same as S1 at 16 msg/s (62 ms interval). Simulates 4 simultaneous drones.
 
-**Expected result — ACME CSE v2025.11 TinyDB throughput ceiling:**
+**Observed result — ACME CSE v2025.11 TinyDB throughput ceiling:**
 
 ACME CSE v2025.11 uses TinyDB (a file-based Python store) for persistence. Notification
 delivery is processed synchronously inside the CSE's single asyncio event loop. Under load,
-TinyDB writes block the loop and cap effective notification throughput at **≈ 4.9 msg/s**
-regardless of incoming rate.
+TinyDB writes block the loop and cap effective notification throughput at **≈ 4–5 msg/s**
+(protocol-dependent: WebSocket ≈ 5.2 msg/s, MQTT ≈ 4.6 msg/s, HTTP ≈ 3.9 msg/s).
 
-At 16 msg/s this creates a sustained surplus of **11.1 notifications/s**:
+At 16 msg/s this creates a sustained surplus:
 
 | Quantity | Value |
 |---|---|
 | Input rate | 16.0 msg/s |
-| CSE delivery ceiling | ~4.9 msg/s |
-| Queue growth rate | ~11.1 entries/s |
-| Notifications queued after 60 s run | ~666 |
-| Time to clear queue at 4.9 msg/s | ~136 s |
-| 3 s drain at run start clears | ~15 entries |
+| CSE delivery ceiling (MQTT) | ~4.6 msg/s |
+| Queue growth rate | ~11.4 entries/s |
+| Notifications queued after 60 s run | ~684 |
+| Time to clear queue | ~148 s |
+| 3 s drain at run start clears | ~14 entries |
 
-**Observed effects during S2 (60 s run):**
-- Packet loss ≈ 69 % (notifications queued faster than delivered)
-- `latency_ms` grows linearly: 180 ms → 84 s as queue depth increases
-- This is the paper result, not a bug — it characterises the CSE throughput ceiling
+**Observed effects during S2 (60 s run, 120 runs total):**
+
+| Protocol | Throughput (msg/s) | Packet loss | Notes |
+|---|---|---|---|
+| WebSocket | 5.2 | 0.7 % | Persistent connection — lowest overhead per notification |
+| MQTT | 4.6 | 0.0 % | Mosquitto buffers all; no loss but highest queue delay (~37 s mean) |
+| HTTP | 3.9 | 0.3 % | Per-request overhead limits throughput below other protocols |
+| CoAP | 6.5* | **69.9 %** | UDP datagrams dropped by OS receive buffer under asyncio saturation |
+
+*CoAP throughput figure unreliable due to 70 % loss — only surviving packets counted.
+
+`latency_ms` in S2 grows monotonically with `seq` (queue depth signature, not protocol behaviour).
+Values of 25–37 s represent CSE queue delay, not network latency — not used for protocol comparison.
 
 **Cross-run contamination (critical for data quality):**
 
@@ -109,6 +118,66 @@ MQTT ≈ 93–125 ms.
 **Do not use** `latency_ms` for S3 analysis — it equals `t_recv_ms − t_cmd_ms` across two
 clocks; the Android RC clock is typically ~1880 ms behind the dev machine, so raw values are
 negative. Use `cin_create_ms` for all S3 latency and jitter figures in the paper.
+
+---
+
+## Results
+
+120 runs completed (4 protocols × 3 scenarios × 10 runs each).
+
+### S1 — Telemetry 4 msg/s (NTP-corrected latency)
+
+| Protocol | Mean (ms) | Median (ms) | p95 (ms) | Jitter (ms) | Packet loss |
+|---|---:|---:|---:|---:|---:|
+| MQTT | **100.3** | **97.8** | **120.8** | **15.7** | 0.0 % |
+| CoAP | 108.6 | 105.5 | 122.6 | 25.4 | 1.5 % |
+| WebSocket | 133.5 | 129.0 | 154.3 | 25.5 | 0.0 % |
+| HTTP | 182.5 | 151.1 | 190.8 | 150.1 | 1.3 % |
+
+NTP offset corrected (δ ≈ −1 900 to −2 600 ms per protocol, Android behind Streamlit).
+True one-way network latency after correction: 80–183 ms.
+
+### S2 — Telemetry 16 msg/s (CSE ceiling — latency not comparable)
+
+S2 latency_ms values (25–37 s) reflect CSE TinyDB queue depth, not protocol latency.
+Meaningful metrics are throughput and packet loss only.
+
+| Protocol | Delivered (msg/s) | Packet loss | Note |
+|---|---:|---:|---|
+| WebSocket | **5.2** | 0.7 % | Persistent connection — best delivery |
+| MQTT | 4.6 | **0.0 %** | Mosquitto buffers all; no loss |
+| HTTP | 3.9 | 0.3 % | Per-request overhead limits throughput |
+| CoAP | 6.5* | **69.9 %** | UDP dropped by OS under asyncio saturation |
+
+*CoAP figure unreliable — only surviving 30 % counted.
+
+### S3 — Command ping round-trip (cin_create_ms, NTP-free)
+
+| Protocol | Mean (ms) | Median (ms) | p95 (ms) | Jitter (ms) | Packet loss |
+|---|---:|---:|---:|---:|---:|
+| CoAP | **80.4** | **78.0** | **94.0** | **8.2** | 0.2 % |
+| MQTT | 102.6 | 98.5 | 134.5 | 16.7 | **0.0 %** |
+| HTTP | 105.9 | 108.2 | 125.3 | 17.4 | 0.3 % |
+| WebSocket | 144.1 | 141.0 | 168.9 | 14.2 | 21.2 % |
+
+WebSocket 21.2 % S3 loss: ACK timeout exceeded on ~13/60 commands per run (CSE notification
+latency on WS persistent connection occasionally exceeds the 15 s ACK timeout).
+
+### Protocol overhead
+
+| Protocol | Header (bytes) | Payload (bytes) | Overhead |
+|---|---:|---:|---:|
+| WebSocket | 8 | 656 | **1.2 %** |
+| MQTT | 40 | 658 | 5.7 % |
+| CoAP | 360 | 651 | 35.6 % |
+| HTTP | 596 | 657 | 47.6 % |
+
+### Key finding
+
+ACME CSE v2025.11 with TinyDB is not viable for real-time UxV operations. The notification
+pipeline caps effective delivery at **≈ 4–5 msg/s** — a ceiling a single drone at 16 msg/s
+can saturate, and a fleet of two or more exceeds entirely. This is a CSE implementation
+constraint, not a limitation of the oneM2M standard.
 
 ---
 
@@ -199,9 +268,9 @@ All measurements are stored in `MetricRecord` — one CSV row per message
 | `src/android/` | Java, DJI SDK v4 | ✅ All 4 protocols verified end-to-end (2026-05-31) |
 | `src/cse/` | Docker, ACME CSE v2025.11 | ✅ Complete — WS keepalive + CoAP NOTIFY patches applied |
 | `src/frontend/` | Python, Streamlit | ✅ Complete — S1/S2/S3 orchestration, logging, results viewer |
-| `src/analysis/` | Python, Jupyter | 🔜 Scripts scaffolded — pending data collection |
+| `src/analysis/` | Python, Jupyter | ✅ Complete — 120/120 runs collected and analysed |
 
-**Current phase:** benchmark data collection (120 runs target).
+**Status:** Complete — all 120 runs collected (4 protocols × 3 scenarios × 10 runs). Paper submitted 2026-06-06.
 
 ---
 
@@ -322,7 +391,7 @@ Docker Desktop uses WSL2 in **mirrored networking mode** (`networkingMode=mirror
 ### Inter-run isolation
 
 After every S2 run (16 msg/s), **restart the CSE before the next run** regardless of scenario
-or protocol. The ~666 notifications queued in TinyDB take ~136 s to clear at the CSE's 4.9/s
+or protocol. The ~684 notifications queued in TinyDB take ~148 s to clear at the CSE's ≈4–5 msg/s
 ceiling — far longer than the 3 s drain the orchestrator performs at run start.
 
 ```bash
@@ -332,7 +401,7 @@ docker compose restart
 curl http://localhost:8080/id-in -H "X-M2M-RI: t" -H "X-M2M-Origin: CAdmin" -H "X-M2M-RVI: 3"
 ```
 
-After S1 or S3 runs no restart is needed — neither generates a backlog (4 msg/s ≤ 4.9/s
+After S1 or S3 runs no restart is needed — neither generates a backlog (4 msg/s ≤ ≈4–5 msg/s
 ceiling for S1; 1 cmd/s for S3).
 
 **Contamination risk by transition:**
@@ -417,7 +486,7 @@ Paper scenario mapping:
 - **Programme:** Mestrado em Engenharia Informática
 - **Course:** Mobilidade em Sistemas Computacionais
 - **Deliverable:** MDPI journal article (format MDPI, 8–12 pp., English, IMRaD)
-- **Deadline:** 2026-06-06 (hard)
+- **Deadline:** 2026-06-06 ✅ Submitted
 
 ---
 
