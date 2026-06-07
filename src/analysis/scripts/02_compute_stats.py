@@ -204,6 +204,12 @@ def compute_run_stats(df_run: pd.DataFrame, run_id: str) -> dict:
     # Jitter = std dev of latency within run (delivered only).
     row["jitter_ms"] = row["lat_std"]
 
+    # ── Corrected latency (lat_corr_*) — S1 only, NTP offset removed ──
+    # Populated by 04_ntp_correction.py. NaN for S2/S3.
+    if "latency_ms_corrected" in df_run.columns:
+        delivered_corr = df_run.loc[df_run["delivered"], "latency_ms_corrected"]
+        row.update(_latency_stats(delivered_corr, prefix="lat_corr"))
+
     row["packet_loss_frac"] = _packet_loss(df_run)
     row.update(_overhead(df_run))
 
